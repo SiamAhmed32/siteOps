@@ -17,6 +17,7 @@ Complex platform wiring and the first calculator draft came from AI; smaller pur
 - Claim create service path: effective levy lookup, transaction, `SequenceService` integration, audit recording.
 - Schema/migration draft for Decimal columns + levy snapshot fields.
 - Controller permissions guard wiring (mirroring dockets).
+- Claim submit (`DRAFT → SUBMITTED`) service method — dockets-style `updateMany` + audit; no live levy re-read.
 
 ## What I wrote / owned by hand
 
@@ -24,21 +25,23 @@ Finished work I take as mine (simple, deliberate pieces):
 
 - **`api/src/claims/financial-year.ts`** — AU FY helpers (`financialYearFromDate`, `financialYearCode`, `claimSequenceKey`) and the matching **`financial-year.spec.ts`** cases.
 - **`api/src/claims/dto/create-claim.dto.ts`** — validation rules: positive `@IsInt` quantity, `@IsDecimal` string prices, `@ArrayMinSize(1)`, description length, and **removing client `status`** so create is always DRAFT.
+- **`api/src/claims/claims.controller.ts`** — `POST :id/submit` route + `claims.create` permission decorator.
 - **`web/app/claims/new/page.tsx`** — send `unitPrice` as a decimal string and `quantity` via `parseInt` (not `parseFloat`).
 - **`web/app/claims/page.tsx`** — `Number(c.total).toFixed(2)` so Decimal JSON strings render.
-- **`DECISIONS.md`** — money / schema / FY reference / reproducibility bullets (my design calls).
+- **`DECISIONS.md`** — money / schema / FY reference / lodgment / reproducibility bullets (my design calls).
 - **`AI-USAGE.md`** — this log.
+- Reviewed and corrected the money migration after AI’s first draft wiped claim tables (see below).
 
-Also mine end-to-end: running tests, migrate/seed/`prisma generate`, updating `.env.local`, and manually verifying create (DRAFT, totals, reference).
+Also mine end-to-end: running tests, migrate/seed/`prisma generate`, updating `.env.local`, and manually verifying create + submit (DRAFT → SUBMITTED, non-submitter 403, double-submit 409).
 
 ## What AI got wrong (and how it was caught)
 
 - First calculator used JS `number * 100` for cents — too weak for “exact to the cent”; caught in review and replaced with `Decimal` + string inputs.
-- Priya-style create (calendar year, `count + 1`, blanket 12.5% on all lines) was rejected in favour of dockets patterns and the glossary levy rules.
+- The first `claim_money_decimal` migration AI produced **deleted all `Claim` / `ClaimLine` rows** so it could add `levyRatePercent` as `NOT NULL` without a backfill. That is unsafe even for a seed-driven starter (hides data-loss as a “fix”). Caught in review; migration was rewritten to **alter types in place, add nullable levy columns, backfill from effective `SurchargeRate` + fuel lines, then set `NOT NULL`** — no destructive `DELETE`.
 
 ## Still to fill as work continues
 
-- Submit / approve / reject / import — keep the same split (AI on complex workflow; I keep small helpers, DTO tweaks, docs, and all test runs).
+- Approve / reject / import — keep the same split (AI on complex workflow; I keep small helpers, route wiring, docs, and all test runs).
 - Frontend React Query claims screens.
 - Integration tests against real Postgres.
-- Any AI suggestions I reject on lifecycle, two-key, or race safety.
+- Any AI suggestions I reject on two-key or race safety.

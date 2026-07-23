@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/library';
 import { AuditService } from '../audit/audit.service';
 import { SequenceService } from '../common/sequence/sequence.service';
@@ -102,6 +108,59 @@ export class ClaimsService {
       throw new NotFoundException(`Claim ${id} not found`);
     }
     return claim;
+  }
+
+  /**
+   * Lodgment: DRAFT → SUBMITTED.
+   * Only the claim's submitter may lodge. Totals / levyRatePercent already stored
+   * at create are left untouched — we never re-read live SurchargeRate rows here.
+   * Status + submitter checks live in the UPDATE WHERE (dockets-style) so concurrent
+   * submits cannot both succeed.
+   */
+  async submit(orgId: string, actorId: string, id: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.claim.updateMany({
+        where: { id, orgId, status: 'DRAFT', submitterId: actorId },
+        data: { status: 'SUBMITTED' },
+      });
+
+      if (updated.count === 0) {
+        const existing = await tx.claim.findFirst({
+          where: { id, orgId },
+          select: { status: true, submitterId: true },
+        });
+        if (!existing) throw new NotFoundException('Claim not found');
+        if (existing.submitterId !== actorId) {
+          throw new ForbiddenException('Only the claim submitter can lodge this claim');
+        }
+        throw new ConflictException(`Claim is ${existing.status}, expected DRAFT`);
+      }
+
+      const claim = await tx.claim.findFirstOrThrow({
+        where: { id, orgId },
+        include: { lines: true, project: { select: { code: true, name: true } } },
+      });
+
+      await this.audit.record(
+        {
+          orgId,
+          actorId,
+          action: 'claim.submitted',
+          entityType: 'claim',
+          entityId: id,
+          before: { status: 'DRAFT' },
+          after: {
+            status: 'SUBMITTED',
+            total: claim.total,
+            levyRatePercent: claim.levyRatePercent,
+            levyAmount: claim.levyAmount,
+          },
+        },
+        tx as any,
+      );
+
+      return claim;
+    });
   }
 
   /**

@@ -21,10 +21,16 @@ export class ClaimsController {
     return this.claims.findAll((req as any).orgId);
   }
 
+  @Post(':id/submit')
+  @Permissions('claims.create')
+  submit(@Param('id') id: string, @Req() req: Request) {
+    return this.claims.submit((req as any).orgId, (req as any).user.id, id);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @Req() req: Request) {
     return this.claims.findOne((req as any).orgId, id);
   }
 
-  // TODO: submit / approve / reject / import
+  // TODO: approve / reject / import
 }

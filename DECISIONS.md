@@ -17,6 +17,7 @@ Short, bullet-style notes for the SiteOps expense-claims assessment.
 - Added `Claim.levyRatePercent` + `Claim.levyAmount` so totals stay reproducible when org rates change later.
 - Claim reference uniqueness is `@@unique([orgId, reference])` (same idea as dockets) so two orgs can both have `EXP 26-0001`.
 - Create always stores the rate in force on `expenseDate`; submit must not re-read live rates (enforced when submit lands).
+- Migration for the above **backfills** levy fields from effective rates + fuel lines — it must not wipe claims to make `NOT NULL` easy.
 
 ## Reference numbering
 
@@ -26,11 +27,16 @@ Short, bullet-style notes for the SiteOps expense-claims assessment.
 ## Levy reproducibility
 
 - On create, persist `levyRatePercent` + `levyAmount` + `total` from the rate effective on `expenseDate`.
-- Lodgment (submit) must use the stored rate/amounts — never re-query `SurchargeRate` for an already-computed claim (submit endpoint will enforce this).
+- Lodgment (`POST /claims/:id/submit`) only flips `DRAFT → SUBMITTED` — it does **not** re-query `SurchargeRate` or recompute totals.
+
+## Lodgment
+
+- Only the claim's `submitterId` may submit; others get `403`.
+- Atomic `updateMany` with `status: DRAFT` + `submitterId` in the WHERE (same idea as docket confirm) so double-submit races yield one winner + `409`.
 
 ## Concurrent decisions / two-key
 
-- (TBD)
+- (TBD — approve/reject)
 
 ## Final-approval event
 
