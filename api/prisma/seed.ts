@@ -62,8 +62,8 @@ async function main() {
     await prisma.surchargeRate.deleteMany({ where: { orgId: org.id } });
     await prisma.surchargeRate.createMany({
       data: [
-        { orgId: org.id, ratePercent: 10, effectiveFrom: new Date('2024-07-01') },
-        { orgId: org.id, ratePercent: 12.5, effectiveFrom: new Date('2026-01-01') },
+        { orgId: org.id, ratePercent: '10.00', effectiveFrom: new Date('2024-07-01') },
+        { orgId: org.id, ratePercent: '12.50', effectiveFrom: new Date('2026-01-01') },
       ],
     });
   }
@@ -143,33 +143,44 @@ async function main() {
   const claimDefs = [
     {
       orgId: roadco.id, projectId: projects['M7-RESURF'].id, submitterId: users['alice'].id,
-      reference: 'EXP 26-0001', status: 'SUBMITTED', expenseDate: new Date('2026-02-10'), total: 457.35,
+      reference: 'EXP 26-0001', status: 'SUBMITTED', expenseDate: new Date('2026-02-10'),
+      levyRatePercent: '12.50', levyAmount: '33.15', total: '457.35',
       lines: [
-        { description: 'Diesel for pavers', quantity: 3, unitPrice: 88.4, isFuel: true },
-        { description: 'Line-marking paint', quantity: 6, unitPrice: 26.5, isFuel: false },
+        { description: 'Diesel for pavers', quantity: 3, unitPrice: '88.40', isFuel: true },
+        { description: 'Line-marking paint', quantity: 6, unitPrice: '26.50', isFuel: false },
       ],
     },
     {
       orgId: roadco.id, projectId: projects['GLENN-RD'].id, submitterId: users['bob'].id,
-      reference: 'EXP 26-0002', status: 'DRAFT', expenseDate: new Date('2026-03-02'), total: 187.0,
-      lines: [{ description: 'Traffic cones (pack of 10)', quantity: 2, unitPrice: 93.5, isFuel: false }],
+      reference: 'EXP 26-0002', status: 'DRAFT', expenseDate: new Date('2026-03-02'),
+      levyRatePercent: '12.50', levyAmount: '0.00', total: '187.00',
+      lines: [{ description: 'Traffic cones (pack of 10)', quantity: 2, unitPrice: '93.50', isFuel: false }],
     },
     {
       orgId: roadco.id, projectId: projects['M7-RESURF'].id, submitterId: users['bob'].id,
-      reference: 'EXP 26-0003', status: 'APPROVED', expenseDate: new Date('2026-01-18'), total: 67.47,
+      reference: 'EXP 26-0003', status: 'APPROVED', expenseDate: new Date('2026-01-18'),
+      levyRatePercent: '12.50', levyAmount: '7.50', total: '67.47',
       approvedBy: users['carol'].id, approvedAt: new Date('2026-01-20'),
-      lines: [{ description: 'Unleaded for gen-set', quantity: 3, unitPrice: 19.99, isFuel: true }],
+      lines: [{ description: 'Unleaded for gen-set', quantity: 3, unitPrice: '19.99', isFuel: true }],
     },
     {
       orgId: pavecorp.id, projectId: projects['PAC-HWY'].id, submitterId: users['eve'].id,
-      reference: 'EXP 26-0101', status: 'SUBMITTED', expenseDate: new Date('2026-04-05'), total: 315.0,
-      lines: [{ description: 'Formply sheets', quantity: 7, unitPrice: 45.0, isFuel: false }],
+      reference: 'EXP 26-0001', status: 'SUBMITTED', expenseDate: new Date('2026-04-05'),
+      levyRatePercent: '12.50', levyAmount: '0.00', total: '315.00',
+      lines: [{ description: 'Formply sheets', quantity: 7, unitPrice: '45.00', isFuel: false }],
     },
   ];
   for (const c of claimDefs) {
     const { lines, ...claim } = c;
     await prisma.claim.create({ data: { ...claim, lines: { create: lines } } });
   }
+
+  await prisma.numberSequence.createMany({
+    data: [
+      { orgId: roadco.id, key: 'claim:26', nextValue: 4 },
+      { orgId: pavecorp.id, key: 'claim:26', nextValue: 2 },
+    ],
+  });
 
   console.log('Seed complete: 2 orgs, 5 users, 5 projects, 5 equipment, 5 dockets, 4 claims, 2 notes.');
 }

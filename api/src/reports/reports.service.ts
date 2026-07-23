@@ -29,7 +29,9 @@ export class ReportsService {
       }),
     ]);
 
-    const claimsByProject = new Map(claimSums.map((c) => [c.projectId, c._sum.total ?? 0]));
+    const claimsByProject = new Map(
+      claimSums.map((c) => [c.projectId, Number(c._sum.total ?? 0)]),
+    );
     const plantByProject = new Map<string, number>();
     for (const d of dockets) {
       // day rate covers 8 site hours; dockets bill pro-rata to the cent

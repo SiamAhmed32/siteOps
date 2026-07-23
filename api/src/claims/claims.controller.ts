@@ -1,17 +1,19 @@
-import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
+import { Permissions } from '../common/decorators/permissions.decorator';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { ClaimsService } from './claims.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
 
 @Controller('claims')
+@UseGuards(PermissionsGuard)
 export class ClaimsController {
   constructor(private readonly claims: ClaimsService) {}
 
   @Post()
+  @Permissions('claims.create')
   create(@Body() dto: CreateClaimDto, @Req() req: Request) {
-    const user = (req as any).user;
-    const orgId = (req as any).orgId;
-    return this.claims.create(dto, user.id, orgId);
+    return this.claims.create(dto, (req as any).user.id, (req as any).orgId);
   }
 
   @Get()
@@ -19,10 +21,28 @@ export class ClaimsController {
     return this.claims.findAll((req as any).orgId);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.claims.findOne(id);
+  @Post(':id/submit')
+  @Permissions('claims.create')
+  submit(@Param('id') id: string, @Req() req: Request) {
+    return this.claims.submit((req as any).orgId, (req as any).user.id, id);
   }
 
-  // TODO: submit / approve / reject / import
+  @Post(':id/approve')
+  @Permissions('claims.approve')
+  approve(@Param('id') id: string, @Req() req: Request) {
+    return this.claims.approve((req as any).orgId, (req as any).user.id, id);
+  }
+
+  @Post(':id/reject')
+  @Permissions('claims.approve')
+  reject(@Param('id') id: string, @Req() req: Request) {
+    return this.claims.reject((req as any).orgId, (req as any).user.id, id);
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string, @Req() req: Request) {
+    return this.claims.findOne((req as any).orgId, id);
+  }
+
+  // TODO: import
 }

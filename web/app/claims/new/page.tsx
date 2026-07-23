@@ -44,8 +44,8 @@ export default function NewClaimPage() {
         expenseDate,
         lines: lines.map((l) => ({
           description: l.description,
-          quantity: parseFloat(l.quantity),
-          unitPrice: parseFloat(l.unitPrice),
+          quantity: parseInt(l.quantity, 10),
+          unitPrice: l.unitPrice, // decimal string — matches API CreateClaimDto
           isFuel: l.isFuel,
         })),
       }),

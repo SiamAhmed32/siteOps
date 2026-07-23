@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface AuditEntry {
@@ -16,7 +17,10 @@ export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
   /** Record a state-changing action. Pass `tx` to write inside the caller's transaction. */
-  async record(entry: AuditEntry, tx: Pick<PrismaService, 'auditLog'> = this.prisma) {
+  async record(
+    entry: AuditEntry,
+    tx: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
     return tx.auditLog.create({
       data: {
         orgId: entry.orgId,
