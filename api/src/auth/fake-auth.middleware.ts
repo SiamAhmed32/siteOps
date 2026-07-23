@@ -19,6 +19,11 @@ export class FakeAuthMiddleware implements NestMiddleware {
       throw new UnauthorizedException('Unknown user');
     }
 
+    // Tenant consistency — not real auth, but refuse cross-org header spoofing.
+    if (user.orgId !== orgId) {
+      throw new UnauthorizedException('User does not belong to this organization');
+    }
+
     (req as any).user = user;
     (req as any).orgId = orgId;
     next();

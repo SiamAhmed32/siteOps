@@ -29,6 +29,11 @@ export interface ClaimTotals {
 const ZERO = new Decimal(0);
 const HUNDRED = new Decimal(100);
 
+/** Largest value that fits the DB money columns (Decimal(12,2)). */
+export const MAX_MONEY = new Decimal('9999999999.99');
+/** Upper bound on line quantity — keeps line/claim totals within storage limits. */
+export const MAX_QUANTITY = 1_000_000;
+
 /** Half-up to 2 decimal places (cents). */
 export function roundMoneyHalfUp(value: Decimal): Decimal {
   return value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
@@ -45,6 +50,9 @@ export function parseMoney(value: MoneyInput, field = 'amount'): Decimal {
   }
   if (raw.decimalPlaces() > 2) {
     throw new Error(`${field} must have at most 2 decimal places`);
+  }
+  if (raw.gt(MAX_MONEY)) {
+    throw new Error(`${field} exceeds the maximum supported amount (${MAX_MONEY.toFixed(2)})`);
   }
   return raw;
 }
@@ -67,6 +75,9 @@ export function parseRatePercent(value: RateInput, field = 'levyRatePercent'): D
 function assertPositiveInt(quantity: number): void {
   if (!Number.isInteger(quantity) || quantity < 1) {
     throw new Error('quantity must be a positive integer');
+  }
+  if (quantity > MAX_QUANTITY) {
+    throw new Error(`quantity must not exceed ${MAX_QUANTITY}`);
   }
 }
 
@@ -97,6 +108,12 @@ export function computeClaimTotals(
   const levy = roundMoneyHalfUp(fuel.mul(rate).div(HUNDRED));
   const linesSubtotal = roundMoneyHalfUp(fuel.add(nonFuel));
   const total = roundMoneyHalfUp(linesSubtotal.add(levy));
+
+  if (total.gt(MAX_MONEY)) {
+    throw new Error(
+      `claim total exceeds the maximum supported amount (${MAX_MONEY.toFixed(2)})`,
+    );
+  }
 
   return {
     linesSubtotal,

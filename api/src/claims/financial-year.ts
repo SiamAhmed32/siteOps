@@ -18,3 +18,18 @@ export function financialYearCode(date: Date): string {
 export function claimSequenceKey(date: Date): string {
   return `claim:${financialYearCode(date)}`;
 }
+
+/**
+ * Inclusive start / exclusive end for a two-digit FY code (e.g. "26" → FY26).
+ * FY26 = [2025-07-01, 2026-07-01).
+ */
+export function financialYearDateRange(fyCode: string): { gte: Date; lt: Date } {
+  if (!/^\d{2}$/.test(fyCode)) {
+    throw new Error('fy must be a two-digit code, e.g. "26"');
+  }
+  const endYear = 2000 + Number(fyCode);
+  return {
+    gte: new Date(Date.UTC(endYear - 1, 6, 1)),
+    lt: new Date(Date.UTC(endYear, 6, 1)),
+  };
+}

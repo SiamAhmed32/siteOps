@@ -155,4 +155,32 @@ describe('claim totals / levy (Decimal)', () => {
       expect(lines).toEqual(snapshot);
     });
   });
+
+  describe('storage bounds', () => {
+    it('accepts a large but in-range total', () => {
+      const result = computeClaimTotals(
+        [{ quantity: 1, unitPrice: '9999999999.99', isFuel: false }],
+        '0',
+      );
+      expect(result.total.toString()).toBe('9999999999.99');
+    });
+
+    it('rejects a unit price beyond the money column', () => {
+      expect(() =>
+        computeClaimTotals([{ quantity: 1, unitPrice: '10000000000.00', isFuel: false }], '0'),
+      ).toThrow(/maximum supported amount/);
+    });
+
+    it('rejects a quantity beyond the allowed maximum', () => {
+      expect(() =>
+        computeClaimTotals([{ quantity: 1_000_001, unitPrice: '1.00', isFuel: false }], '0'),
+      ).toThrow(/not exceed/);
+    });
+
+    it('rejects an aggregate total that overflows Decimal(12,2)', () => {
+      expect(() =>
+        computeClaimTotals([{ quantity: 1_000_000, unitPrice: '9999999999.99', isFuel: false }], '0'),
+      ).toThrow(/claim total exceeds/);
+    });
+  });
 });

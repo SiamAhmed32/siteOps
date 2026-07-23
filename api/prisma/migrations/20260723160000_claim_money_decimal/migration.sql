@@ -1,5 +1,10 @@
 -- Claim money: Float → Decimal, levy snapshot columns, org-scoped references.
--- Non-destructive: backfill levy fields from existing rows + effective rates (no DELETE).
+-- Non-destructive: alter types in place and backfill (no DELETE).
+--
+-- Note on ordering vs. fresh installs: on a clean setup this migration runs on an
+-- empty Claim table (seed runs after migrate), so the backfill UPDATEs affect zero
+-- rows. They exist as a real, correct data-remediation path for databases that
+-- already hold claims (e.g. Priya's pre-existing rows).
 
 DROP INDEX IF EXISTS "Claim_reference_key";
 
@@ -12,10 +17,12 @@ ALTER TABLE "ClaimLine" ALTER COLUMN "unitPrice" SET DATA TYPE DECIMAL(12,2)
 ALTER TABLE "SurchargeRate" ALTER COLUMN "ratePercent" SET DATA TYPE DECIMAL(5,2)
   USING ROUND(("ratePercent")::numeric, 2);
 
-ALTER TABLE "Claim" ADD COLUMN IF NOT EXISTS "levyAmount" DECIMAL(12,2);
 ALTER TABLE "Claim" ADD COLUMN IF NOT EXISTS "levyRatePercent" DECIMAL(5,2);
+ALTER TABLE "Claim" ADD COLUMN IF NOT EXISTS "levyAmount" DECIMAL(12,2);
 
--- Rate in force on each claim's expense date (effective-dated surcharge).
+-- 1) Rate in force on each claim's expense date (effective-dated surcharge).
+--    No arbitrary fallback: a claim with no matching rate is left NULL so the
+--    NOT NULL step below fails loudly rather than inventing a rate.
 UPDATE "Claim" AS c
 SET "levyRatePercent" = (
   SELECT sr."ratePercent"
@@ -27,10 +34,7 @@ SET "levyRatePercent" = (
 )
 WHERE c."levyRatePercent" IS NULL;
 
--- Fallback if a claim somehow has no matching rate row (should not happen with seed).
-UPDATE "Claim" SET "levyRatePercent" = 12.50 WHERE "levyRatePercent" IS NULL;
-
--- Levy = half-up(fuel subtotal × rate / 100), once per claim.
+-- 2) Levy = half-up(fuel subtotal × rate / 100), once per claim.
 UPDATE "Claim" AS c
 SET "levyAmount" = ROUND((
   SELECT COALESCE(SUM(cl."quantity" * cl."unitPrice"), 0)
@@ -39,7 +43,13 @@ SET "levyAmount" = ROUND((
 ) * c."levyRatePercent" / 100, 2)
 WHERE c."levyAmount" IS NULL;
 
-UPDATE "Claim" SET "levyAmount" = 0 WHERE "levyAmount" IS NULL;
+-- 3) Recompute total = all line totals + levy, so legacy/broken totals are corrected.
+UPDATE "Claim" AS c
+SET "total" = ROUND((
+  SELECT COALESCE(SUM(cl."quantity" * cl."unitPrice"), 0)
+  FROM "ClaimLine" AS cl
+  WHERE cl."claimId" = c."id"
+) + COALESCE(c."levyAmount", 0), 2);
 
 ALTER TABLE "Claim" ALTER COLUMN "levyRatePercent" SET NOT NULL;
 ALTER TABLE "Claim" ALTER COLUMN "levyAmount" SET NOT NULL;
