@@ -9,7 +9,7 @@ type Claim = {
   reference: string;
   status: string;
   expenseDate: string;
-  total: number;
+  total: number | string;
   project?: { code: string; name: string };
 };
 
@@ -48,7 +48,7 @@ export default function ClaimsPage() {
                 <td>
                   <span className={`badge ${c.status}`}>{c.status}</span>
                 </td>
-                <td className="num">${c.total.toFixed(2)}</td>
+                <td className="num">${Number(c.total).toFixed(2)}</td>
               </tr>
             ))}
             {claims.length === 0 && (
