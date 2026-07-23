@@ -27,10 +27,22 @@ export class ClaimsController {
     return this.claims.submit((req as any).orgId, (req as any).user.id, id);
   }
 
+  @Post(':id/approve')
+  @Permissions('claims.approve')
+  approve(@Param('id') id: string, @Req() req: Request) {
+    return this.claims.approve((req as any).orgId, (req as any).user.id, id);
+  }
+
+  @Post(':id/reject')
+  @Permissions('claims.approve')
+  reject(@Param('id') id: string, @Req() req: Request) {
+    return this.claims.reject((req as any).orgId, (req as any).user.id, id);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @Req() req: Request) {
     return this.claims.findOne((req as any).orgId, id);
   }
 
-  // TODO: approve / reject / import
+  // TODO: import
 }

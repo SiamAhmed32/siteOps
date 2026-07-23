@@ -1,7 +1,8 @@
-import { Decimal } from '@prisma/client/runtime/library';
+import { Decimal } from 'decimal.js';
 import {
   computeClaimTotals,
   parseMoney,
+  parseRatePercent,
   roundMoneyHalfUp,
   type ClaimLineInput,
 } from './claim-totals';
@@ -9,7 +10,6 @@ import {
 describe('claim totals / levy (Decimal)', () => {
   describe('roundMoneyHalfUp', () => {
     it('rounds a half-cent up', () => {
-      // 0.125 → 0.13
       expect(roundMoneyHalfUp(new Decimal('0.125')).toString()).toBe('0.13');
       expect(roundMoneyHalfUp(new Decimal('7.49625')).toString()).toBe('7.5');
       expect(roundMoneyHalfUp(new Decimal('2.4')).toString()).toBe('2.4');
@@ -23,7 +23,6 @@ describe('claim totals / levy (Decimal)', () => {
     });
 
     it('accepts values that would drift as IEEE floats when passed as strings', () => {
-      // 0.1 + 0.2 as floats is 0.30000000000000004; as decimals it is exact.
       const a = parseMoney('0.1');
       const b = parseMoney('0.2');
       expect(a.add(b).toString()).toBe('0.3');
@@ -38,10 +37,13 @@ describe('claim totals / levy (Decimal)', () => {
     });
   });
 
-  /**
-   * Golden examples from the assessment brief (12.5% levy rate).
-   * Prices as strings — the wire format we will use on create DTOs.
-   */
+  describe('parseRatePercent', () => {
+    it('accepts rates such as 12.5 without treating them as money cents', () => {
+      expect(parseRatePercent('12.5').toString()).toBe('12.5');
+      expect(parseRatePercent('10.00').toString()).toBe('10');
+    });
+  });
+
   describe('golden examples at 12.5% levy', () => {
     it('one fuel line 3 × $19.99 → total $67.47', () => {
       const result = computeClaimTotals(
@@ -49,9 +51,9 @@ describe('claim totals / levy (Decimal)', () => {
         '12.5',
       );
 
-      expect(result.fuelSubtotal).toBe(59.97);
-      expect(result.levyAmount).toBe(7.5);
-      expect(result.total).toBe(67.47);
+      expect(result.fuelSubtotal.toString()).toBe('59.97');
+      expect(result.levyAmount.toString()).toBe('7.5');
+      expect(result.total.toString()).toBe('67.47');
     });
 
     it('two fuel $1.00 + one non-fuel $5.00 → total $7.25', () => {
@@ -64,26 +66,24 @@ describe('claim totals / levy (Decimal)', () => {
         '12.5',
       );
 
-      expect(result.fuelSubtotal).toBe(2);
-      expect(result.levyAmount).toBe(0.25);
-      expect(result.linesSubtotal).toBe(7);
-      expect(result.total).toBe(7.25);
+      expect(result.fuelSubtotal.toString()).toBe('2');
+      expect(result.levyAmount.toString()).toBe('0.25');
+      expect(result.linesSubtotal.toString()).toBe('7');
+      expect(result.total.toString()).toBe('7.25');
     });
   });
 
   describe('levy behaviour', () => {
     it('rounds levy half-up when the raw levy lands on a half-cent', () => {
-      // $1.00 fuel × 12.5% = 0.125 → 0.13
       const result = computeClaimTotals(
         [{ quantity: 1, unitPrice: '1.00', isFuel: true }],
         '12.5',
       );
-      expect(result.levyAmount).toBe(0.13);
-      expect(result.total).toBe(1.13);
+      expect(result.levyAmount.toString()).toBe('0.13');
+      expect(result.total.toString()).toBe('1.13');
     });
 
     it('computes levy once on the fuel subtotal, not per line', () => {
-      // Per-line: 0.125 → 0.13 each = 0.26. Combined: 2.00 × 12.5% = 0.25.
       const result = computeClaimTotals(
         [
           { quantity: 1, unitPrice: '1.00', isFuel: true },
@@ -91,8 +91,8 @@ describe('claim totals / levy (Decimal)', () => {
         ],
         '12.5',
       );
-      expect(result.levyAmount).toBe(0.25);
-      expect(result.total).toBe(2.25);
+      expect(result.levyAmount.toString()).toBe('0.25');
+      expect(result.total.toString()).toBe('2.25');
     });
 
     it('does not apply levy when there are no fuel lines', () => {
@@ -100,16 +100,16 @@ describe('claim totals / levy (Decimal)', () => {
         [{ quantity: 2, unitPrice: '10.00', isFuel: false }],
         '12.5',
       );
-      expect(result.fuelSubtotal).toBe(0);
-      expect(result.levyAmount).toBe(0);
-      expect(result.total).toBe(20);
+      expect(result.fuelSubtotal.toString()).toBe('0');
+      expect(result.levyAmount.toString()).toBe('0');
+      expect(result.total.toString()).toBe('20');
     });
 
     it('handles zero fuel subtotal with empty lines as zero total', () => {
       const result = computeClaimTotals([], '12.5');
-      expect(result.fuelSubtotal).toBe(0);
-      expect(result.levyAmount).toBe(0);
-      expect(result.total).toBe(0);
+      expect(result.fuelSubtotal.toString()).toBe('0');
+      expect(result.levyAmount.toString()).toBe('0');
+      expect(result.total.toString()).toBe('0');
     });
 
     it('uses the provided rate (10%) instead of a hard-coded 12.5%', () => {
@@ -117,8 +117,8 @@ describe('claim totals / levy (Decimal)', () => {
         [{ quantity: 1, unitPrice: '100.00', isFuel: true }],
         '10',
       );
-      expect(result.levyAmount).toBe(10);
-      expect(result.total).toBe(110);
+      expect(result.levyAmount.toString()).toBe('10');
+      expect(result.total.toString()).toBe('110');
     });
 
     it('supports a large but permitted line total', () => {
@@ -126,7 +126,7 @@ describe('claim totals / levy (Decimal)', () => {
         [{ quantity: 1000, unitPrice: '9999.99', isFuel: false }],
         '12.5',
       );
-      expect(result.total).toBe(9_999_990);
+      expect(result.total.toString()).toBe('9999990');
     });
   });
 
@@ -149,9 +149,7 @@ describe('claim totals / levy (Decimal)', () => {
 
   describe('input immutability', () => {
     it("does not mutate the caller's line objects", () => {
-      const lines: ClaimLineInput[] = [
-        { quantity: 1, unitPrice: '19.99', isFuel: true },
-      ];
+      const lines: ClaimLineInput[] = [{ quantity: 1, unitPrice: '19.99', isFuel: true }];
       const snapshot = structuredClone(lines);
       computeClaimTotals(lines, '12.5');
       expect(lines).toEqual(snapshot);

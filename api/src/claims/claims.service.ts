@@ -5,13 +5,20 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { SequenceService } from '../common/sequence/sequence.service';
+import { OutboxService } from '../outbox/outbox.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { requiresTwoKeys } from './claim-lifecycle';
 import { computeClaimTotals } from './claim-totals';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { claimSequenceKey, financialYearCode } from './financial-year';
+
+const claimInclude = {
+  lines: true,
+  project: { select: { code: true, name: true } },
+} as const;
 
 @Injectable()
 export class ClaimsService {
@@ -19,6 +26,7 @@ export class ClaimsService {
     private readonly prisma: PrismaService,
     private readonly sequence: SequenceService,
     private readonly audit: AuditService,
+    private readonly outbox: OutboxService,
   ) {}
 
   async create(dto: CreateClaimDto, userId: string, orgId: string) {
@@ -55,8 +63,8 @@ export class ClaimsService {
           status: 'DRAFT',
           expenseDate,
           levyRatePercent: rate,
-          levyAmount: new Decimal(totals.levyAmount.toFixed(2)),
-          total: new Decimal(totals.total.toFixed(2)),
+          levyAmount: totals.levyAmount.toFixed(2),
+          total: totals.total.toFixed(2),
           lines: {
             create: dto.lines.map((l) => ({
               description: l.description,
@@ -66,7 +74,7 @@ export class ClaimsService {
             })),
           },
         },
-        include: { lines: true, project: { select: { code: true, name: true } } },
+        include: claimInclude,
       });
 
       await this.audit.record(
@@ -84,7 +92,7 @@ export class ClaimsService {
             levyAmount: claim.levyAmount,
           },
         },
-        tx as any,
+        tx,
       );
 
       return claim;
@@ -94,7 +102,7 @@ export class ClaimsService {
   async findAll(orgId: string) {
     return this.prisma.claim.findMany({
       where: { orgId },
-      include: { lines: true, project: { select: { code: true, name: true } } },
+      include: claimInclude,
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -102,12 +110,13 @@ export class ClaimsService {
   async findOne(orgId: string, id: string) {
     const claim = await this.prisma.claim.findFirst({
       where: { id, orgId },
-      include: { lines: true, project: { select: { code: true, name: true } } },
+      include: claimInclude,
     });
     if (!claim) {
       throw new NotFoundException(`Claim ${id} not found`);
     }
-    return claim;
+    const history = await this.audit.forEntity(orgId, 'claim', id);
+    return { ...claim, history };
   }
 
   /**
@@ -138,7 +147,7 @@ export class ClaimsService {
 
       const claim = await tx.claim.findFirstOrThrow({
         where: { id, orgId },
-        include: { lines: true, project: { select: { code: true, name: true } } },
+        include: claimInclude,
       });
 
       await this.audit.record(
@@ -156,11 +165,205 @@ export class ClaimsService {
             levyAmount: claim.levyAmount,
           },
         },
-        tx as any,
+        tx,
       );
 
       return claim;
     });
+  }
+
+  /**
+   * Approve — one-key or two-key depending on ex-GST total.
+   * No self-dealing. Concurrent approvers: status (+ first key actor) checked in UPDATE WHERE.
+   * Final approval enqueues outbox `claim.approved` (like docket.confirmed).
+   */
+  async approve(orgId: string, actorId: string, id: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.claim.findFirst({
+        where: { id, orgId },
+        select: {
+          status: true,
+          submitterId: true,
+          total: true,
+          firstApprovedById: true,
+          reference: true,
+        },
+      });
+      if (!existing) throw new NotFoundException('Claim not found');
+      if (existing.submitterId === actorId) {
+        throw new ForbiddenException('Cannot approve your own claim');
+      }
+
+      const now = new Date();
+      const twoKey = requiresTwoKeys(existing.total);
+
+      if (existing.status === 'SUBMITTED') {
+        if (twoKey) {
+          const updated = await tx.claim.updateMany({
+            where: { id, orgId, status: 'SUBMITTED' },
+            data: {
+              status: 'PARTIALLY_APPROVED',
+              firstApprovedById: actorId,
+              firstApprovedAt: now,
+            },
+          });
+          if (updated.count === 0) {
+            throw new ConflictException('Claim is no longer SUBMITTED');
+          }
+          const claim = await tx.claim.findFirstOrThrow({ where: { id, orgId }, include: claimInclude });
+          await this.audit.record(
+            {
+              orgId,
+              actorId,
+              action: 'claim.partially_approved',
+              entityType: 'claim',
+              entityId: id,
+              before: { status: 'SUBMITTED' },
+              after: { status: 'PARTIALLY_APPROVED', firstApprovedById: actorId },
+            },
+            tx,
+          );
+          return claim;
+        }
+
+        const updated = await tx.claim.updateMany({
+          where: { id, orgId, status: 'SUBMITTED' },
+          data: {
+            status: 'APPROVED',
+            approvedBy: actorId,
+            approvedAt: now,
+          },
+        });
+        if (updated.count === 0) {
+          throw new ConflictException('Claim is no longer SUBMITTED');
+        }
+        return this.finalizeApproval(tx, orgId, actorId, id, 'SUBMITTED');
+      }
+
+      if (existing.status === 'PARTIALLY_APPROVED') {
+        if (!twoKey) {
+          throw new ConflictException('Claim does not require a second key');
+        }
+        if (existing.firstApprovedById === actorId) {
+          throw new ForbiddenException('Second key must be a different approver');
+        }
+        const updated = await tx.claim.updateMany({
+          where: {
+            id,
+            orgId,
+            status: 'PARTIALLY_APPROVED',
+            firstApprovedById: { not: actorId },
+          },
+          data: {
+            status: 'APPROVED',
+            approvedBy: actorId,
+            approvedAt: now,
+          },
+        });
+        if (updated.count === 0) {
+          const again = await tx.claim.findFirst({
+            where: { id, orgId },
+            select: { status: true, firstApprovedById: true },
+          });
+          if (again?.firstApprovedById === actorId) {
+            throw new ForbiddenException('Second key must be a different approver');
+          }
+          throw new ConflictException(`Claim is ${again?.status}, expected PARTIALLY_APPROVED`);
+        }
+        return this.finalizeApproval(tx, orgId, actorId, id, 'PARTIALLY_APPROVED');
+      }
+
+      throw new ConflictException(`Claim is ${existing.status}, expected SUBMITTED or PARTIALLY_APPROVED`);
+    });
+  }
+
+  /**
+   * Reject from SUBMITTED or PARTIALLY_APPROVED. No self-dealing. Final — no reopen here
+   * (rejected-claims policy documented in DECISIONS.md).
+   */
+  async reject(orgId: string, actorId: string, id: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.claim.findFirst({
+        where: { id, orgId },
+        select: { status: true, submitterId: true },
+      });
+      if (!existing) throw new NotFoundException('Claim not found');
+      if (existing.submitterId === actorId) {
+        throw new ForbiddenException('Cannot reject your own claim');
+      }
+      if (existing.status !== 'SUBMITTED' && existing.status !== 'PARTIALLY_APPROVED') {
+        throw new ConflictException(
+          `Claim is ${existing.status}, expected SUBMITTED or PARTIALLY_APPROVED`,
+        );
+      }
+
+      const beforeStatus = existing.status;
+      const now = new Date();
+      const updated = await tx.claim.updateMany({
+        where: {
+          id,
+          orgId,
+          status: { in: ['SUBMITTED', 'PARTIALLY_APPROVED'] },
+        },
+        data: {
+          status: 'REJECTED',
+          rejectedById: actorId,
+          rejectedAt: now,
+        },
+      });
+      if (updated.count === 0) {
+        const again = await tx.claim.findFirst({ where: { id, orgId }, select: { status: true } });
+        throw new ConflictException(`Claim is ${again?.status}, expected SUBMITTED or PARTIALLY_APPROVED`);
+      }
+
+      const claim = await tx.claim.findFirstOrThrow({ where: { id, orgId }, include: claimInclude });
+      await this.audit.record(
+        {
+          orgId,
+          actorId,
+          action: 'claim.rejected',
+          entityType: 'claim',
+          entityId: id,
+          before: { status: beforeStatus },
+          after: { status: 'REJECTED', rejectedById: actorId },
+        },
+        tx,
+      );
+      return claim;
+    });
+  }
+
+  private async finalizeApproval(
+    tx: Prisma.TransactionClient,
+    orgId: string,
+    actorId: string,
+    id: string,
+    fromStatus: string,
+  ) {
+    const claim = await tx.claim.findFirstOrThrow({ where: { id, orgId }, include: claimInclude });
+    await this.audit.record(
+      {
+        orgId,
+        actorId,
+        action: 'claim.approved',
+        entityType: 'claim',
+        entityId: id,
+        before: { status: fromStatus },
+        after: { status: 'APPROVED', approvedBy: actorId },
+      },
+      tx,
+    );
+    await this.outbox.enqueue(tx, {
+      orgId,
+      type: 'claim.approved',
+      payload: {
+        claimId: id,
+        reference: claim.reference,
+        total: claim.total.toString(),
+        projectId: claim.projectId,
+      },
+    });
+    return claim;
   }
 
   /**

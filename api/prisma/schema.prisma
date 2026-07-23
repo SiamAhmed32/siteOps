@@ -61,8 +61,13 @@ model Claim {
   levyRatePercent Decimal   @db.Decimal(5, 2)
   levyAmount      Decimal   @default(0) @db.Decimal(12, 2)
   total           Decimal   @default(0) @db.Decimal(12, 2)
+  /// First key under the two-key rule (PARTIALLY_APPROVED). Null when one-key approval.
+  firstApprovedById String?
+  firstApprovedAt   DateTime?
   approvedBy      String?
   approvedAt      DateTime?
+  rejectedById    String?
+  rejectedAt      DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
