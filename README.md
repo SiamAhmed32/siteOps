@@ -1,6 +1,6 @@
 # SiteOps — Operations Platform (starter)
 
-Multi-tenant operations platform for road-works contractors. Projects, equipment, plant dockets, site notes, and the burn dashboard are live. The **expense claims** backend workflow is complete; the claims **frontend** is in progress (list + new-claim form done; detail page next). See `ASSESSMENT-BRIEF.md` and `DECISIONS.md`.
+Multi-tenant operations platform for road-works contractors. Projects, equipment, plant dockets, site notes, and the burn dashboard are live. The **expense claims** workflow (backend + claims UI) is implemented; see `ASSESSMENT-BRIEF.md` and `DECISIONS.md`.
 
 ## Layout
 
@@ -12,7 +12,7 @@ Multi-tenant operations platform for road-works contractors. Projects, equipment
   - `src/claims/` — expense claims module (backend complete; see DECISIONS.md)
   - `src/users/` — org members (used by the dev user-switcher)
 - `web/` — Next.js App Router + TypeScript + TanStack React Query
-  - `app/dashboard`, `app/projects`, `app/equipment`, `app/dockets`, `app/claims` — feature screens (`/claims` list + new form; detail next)
+  - `app/dashboard`, `app/projects`, `app/equipment`, `app/dockets`, `app/claims` — feature screens (claims list, new, and detail)
   - `lib/api/` — API client · `lib/query/` — cache keys · `lib/claims/` — live total preview · `lib/use-acting-user.ts` — acting user + permissions
   - `components/` — shell, nav, user switcher, notes panel
 

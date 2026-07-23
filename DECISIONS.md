@@ -71,7 +71,7 @@ Short, bullet-style notes for the SiteOps expense-claims assessment.
 
 - **List (`/claims`)** — React Query + pagination; filters by `status` and FY (two-digit code); row links to detail (detail page is next). Mirrors dockets list patterns (`queryKeys`, `apiGet`, `keepPreviousData`).
 - **New claim (`/claims/new`)** — react-hook-form + zod; `useFieldArray` for lines; live ex-GST preview via `decimal.js` using the **same levy algorithm** as the API (fuel subtotal → levy once, half-up). Effective rate for preview comes from the **seeded rate schedule** (10% from 2024-07-01, 12.5% from 2026-01-01) — no surcharge CRUD in scope, so the client mirrors seed data rather than calling a rates API. `useWatch` drives the preview (not `watch`+`useMemo`, which missed in-place field updates). On create success, invalidates `queryKeys.claims` so the list refreshes without a full reload.
-- **Detail (`/claims/[id]`)** — not built yet (submit/approve/reject UI, audit timeline, GST/inc-GST reference, two-key legibility).
+- **Detail (`/claims/[id]`)** — line items, ex-GST totals with fuel/levy breakdown, GST + inc-GST **reference only** (not stored/thresholded). Audit timeline from `GET /claims/:id` history. Submit (submitter + `DRAFT` only), Approve/Reject (`claims.approve`, no self-dealing). Two-key callout when total > $1,000: shows first approver on `PARTIALLY_APPROVED` and disables second key for the same user. Mutations invalidate claims list, detail, and burn report.
 
 ## Deliberately skipped
 

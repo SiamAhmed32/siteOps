@@ -22,6 +22,7 @@ Complex platform wiring and first drafts of calculator / create / submit / appro
 - Second hardening pass: shared money/quantity/total overflow bounds in the calculator (so create + import both return `400`/curated instead of a Prisma overflow `500`).
 - Claims list page rewrite (React Query, pagination, status/FY filters) following the dockets screen pattern.
 - New-claim form (RHF + zod + `useFieldArray`, live total preview with client-side `decimal.js` calculator).
+- Claim detail page (submit/approve/reject actions, audit timeline, GST reference, two-key callout).
 
 ## What I wrote / owned by hand
 
@@ -52,5 +53,4 @@ Complex platform wiring and first drafts of calculator / create / submit / appro
 
 ## Still to fill as work continues
 
-- Claim **detail page** (`/claims/[id]`) — submit/approve/reject, audit timeline, GST/inc-GST reference, two-key UI.
-- Final README polish at submission.
+- Final README polish at submission (optional CSV import UI remains skipped).
