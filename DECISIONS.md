@@ -69,13 +69,14 @@ Short, bullet-style notes for the SiteOps expense-claims assessment.
 
 ## Frontend (claims)
 
-- **List (`/claims`)** — React Query + pagination; filters by `status` and FY (two-digit code); row links to detail (detail page is next). Mirrors dockets list patterns (`queryKeys`, `apiGet`, `keepPreviousData`).
+- **List (`/claims`)** — React Query + pagination; filters by `status` and FY (options generated from today's date: current FY + 3 back, so FY27 claims are filterable). Rows link to detail. Mirrors dockets list patterns (`queryKeys`, `apiGet`, `keepPreviousData`).
 - **New claim (`/claims/new`)** — react-hook-form + zod; `useFieldArray` for lines; live ex-GST preview via `decimal.js` using the **same levy algorithm** as the API (fuel subtotal → levy once, half-up). Effective rate for preview comes from the **seeded rate schedule** (10% from 2024-07-01, 12.5% from 2026-01-01) — no surcharge CRUD in scope, so the client mirrors seed data rather than calling a rates API. `useWatch` drives the preview (not `watch`+`useMemo`, which missed in-place field updates). On create success, invalidates `queryKeys.claims` so the list refreshes without a full reload.
 - **Detail (`/claims/[id]`)** — line items, ex-GST totals with fuel/levy breakdown, GST + inc-GST **reference only** (not stored/thresholded). Audit timeline from `GET /claims/:id` history. Submit (submitter + `DRAFT` only), Approve/Reject (`claims.approve`, no self-dealing). Two-key callout when total > $1,000: shows first approver on `PARTIALLY_APPROVED` and disables second key for the same user. Mutations invalidate claims list, detail, and burn report.
+- UI permission gates (`useActingUser().can`) are affordances only — the API guard/middleware enforce the real rules.
+- Removed Priya's unused `web/lib/api.ts` fetch helper once all claims screens moved to the envelope-aware `lib/api/client.ts`.
 
 ## Deliberately skipped
 
 - CSV parser assumes **one physical line per row**; multiline quoted fields / unterminated-quote recovery are unsupported (LegacyPlant exports are single-line; the brief emphasises quoted *prices*, which are handled). A mature CSV library would be the next step if multiline fields appear.
-- CSV **import UI** (optional stretch) — API is implemented; UI left out on purpose.
-- Claim **detail page** — next frontend slice.
-- README polish — ongoing as slices land.
+- CSV **import UI** (optional stretch) — the brief marks it optional and the `POST /claims/import` API is fully implemented and tested; a screen would add form/upload plumbing without demonstrating new judgment. Next step if built: textarea/file upload posting to the import endpoint, rendering per-group created/failed results.
+- No UI theming / real auth / new CRUD — per the brief's "what we do NOT want".

@@ -37,6 +37,7 @@ Complex platform wiring and first drafts of calculator / create / submit / appro
 - **`web/lib/query/keys.ts`** — `claims` query keys
 - **`web/lib/claims/levy-rate.ts`** — seeded effective-rate lookup for live preview
 - Zod schema rules on the new-claim form (line validation, money regex)
+- FY filter options generated from today's date; removed the unused starter `web/lib/api.ts`
 - **`DECISIONS.md`** / **`AI-USAGE.md`** / README status updates
 - Caught and required correction of the destructive money migration draft (see below)
 - Ran the **migration upgrade-path verification** on disposable Postgres databases (old-data backfill + missing-rate failure)
@@ -51,6 +52,6 @@ Complex platform wiring and first drafts of calculator / create / submit / appro
 - The starter `GlobalExceptionFilter` was never wired up, so errors could bypass the platform envelope. Registered it globally and added HTTP tests asserting the `{ success, error }` shape.
 - Live total preview on the new-claim form stayed at `—` because `watch()` + `useMemo` did not re-run when RHF updated nested line fields in place. Fixed with `useWatch` on `expenseDate` and `lines`.
 
-## Still to fill as work continues
+## Remaining scope
 
-- Final README polish at submission (optional CSV import UI remains skipped).
+- Mandatory backend + frontend are complete. The only deliberate cut is the optional CSV **import UI** (see DECISIONS.md); the import API itself is implemented and tested.
