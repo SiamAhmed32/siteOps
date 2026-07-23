@@ -20,6 +20,9 @@ Complex platform wiring and first drafts of calculator / create / submit / appro
 - Draft of the HTTP (Nest + Supertest) e2e suite for envelope / guard / middleware coverage.
 - Backend-hardening pass after external review: register the global exception filter, tighten create-DTO validation, curate import error messages, and strict CSV date parsing.
 - Second hardening pass: shared money/quantity/total overflow bounds in the calculator (so create + import both return `400`/curated instead of a Prisma overflow `500`).
+- Claims list page rewrite (React Query, pagination, status/FY filters) following the dockets screen pattern.
+- New-claim form (RHF + zod + `useFieldArray`, live total preview with client-side `decimal.js` calculator).
+- Claim detail page (submit/approve/reject actions, audit timeline, GST reference, two-key callout).
 
 ## What I wrote / owned by hand
 
@@ -31,11 +34,13 @@ Complex platform wiring and first drafts of calculator / create / submit / appro
 - **`api/src/auth/fake-auth.middleware.ts`** — `user.orgId === x-org-id` check
 - DTO hardening: trimmed/bounded descriptions, non-negative bounded `unitPrice`, quantity/line caps
 - `isStrictIsoDate` CSV date validation + its tests
-- Small web fixes for string/`Number(total)` money display
-- **`DECISIONS.md`** / **`AI-USAGE.md`**
+- **`web/lib/query/keys.ts`** — `claims` query keys
+- **`web/lib/claims/levy-rate.ts`** — seeded effective-rate lookup for live preview
+- Zod schema rules on the new-claim form (line validation, money regex)
+- **`DECISIONS.md`** / **`AI-USAGE.md`** / README status updates
 - Caught and required correction of the destructive money migration draft (see below)
 - Ran the **migration upgrade-path verification** on disposable Postgres databases (old-data backfill + missing-rate failure)
-- All test runs, migrate/seed/`prisma generate`, and manual smoke checks
+- All test runs, migrate/seed/`prisma generate`, UI smoke checks, and DevTools network verification
 
 ## What AI got wrong (and how it was caught)
 
@@ -44,8 +49,8 @@ Complex platform wiring and first drafts of calculator / create / submit / appro
 - Docs briefly claimed the wipe was fixed while an older DELETE SQL was still being discussed in review — migration file and DECISIONS/AI-USAGE were aligned to the backfill SQL before push.
 - A later migration draft **invented a `levyRatePercent = 12.50` fallback** and never recomputed `Claim.total`. Review flagged both; corrected to backfill only from effective-dated rates (failing loudly otherwise) and to recompute `total` from lines + levy.
 - The starter `GlobalExceptionFilter` was never wired up, so errors could bypass the platform envelope. Registered it globally and added HTTP tests asserting the `{ success, error }` shape.
+- Live total preview on the new-claim form stayed at `—` because `watch()` + `useMemo` did not re-run when RHF updated nested line fields in place. Fixed with `useWatch` on `expenseDate` and `lines`.
 
 ## Still to fill as work continues
 
-- Claims frontend (list filters, detail, RHF+zod, React Query) — backend minimum endpoints are in place.
-- README update near submission.
+- Final README polish at submission (optional CSV import UI remains skipped).

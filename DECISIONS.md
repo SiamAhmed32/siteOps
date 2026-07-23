@@ -67,9 +67,15 @@ Short, bullet-style notes for the SiteOps expense-claims assessment.
 
 - Pure unit tests (money, FY, lifecycle, CSV) + **Postgres** service tests (workflow/concurrency, list, import) + a focused **HTTP** suite (`claims.http.spec.ts`, Nest + Supertest, real Postgres) covering middleware, ValidationPipe, PermissionsGuard, and the success/error envelope.
 
+## Frontend (claims)
+
+- **List (`/claims`)** — React Query + pagination; filters by `status` and FY (two-digit code); row links to detail (detail page is next). Mirrors dockets list patterns (`queryKeys`, `apiGet`, `keepPreviousData`).
+- **New claim (`/claims/new`)** — react-hook-form + zod; `useFieldArray` for lines; live ex-GST preview via `decimal.js` using the **same levy algorithm** as the API (fuel subtotal → levy once, half-up). Effective rate for preview comes from the **seeded rate schedule** (10% from 2024-07-01, 12.5% from 2026-01-01) — no surcharge CRUD in scope, so the client mirrors seed data rather than calling a rates API. `useWatch` drives the preview (not `watch`+`useMemo`, which missed in-place field updates). On create success, invalidates `queryKeys.claims` so the list refreshes without a full reload.
+- **Detail (`/claims/[id]`)** — line items, ex-GST totals with fuel/levy breakdown, GST + inc-GST **reference only** (not stored/thresholded). Audit timeline from `GET /claims/:id` history. Submit (submitter + `DRAFT` only), Approve/Reject (`claims.approve`, no self-dealing). Two-key callout when total > $1,000: shows first approver on `PARTIALLY_APPROVED` and disables second key for the same user. Mutations invalidate claims list, detail, and burn report.
+
 ## Deliberately skipped
 
 - CSV parser assumes **one physical line per row**; multiline quoted fields / unterminated-quote recovery are unsupported (LegacyPlant exports are single-line; the brief emphasises quoted *prices*, which are handled). A mature CSV library would be the next step if multiline fields appear.
 - CSV **import UI** (optional stretch) — API is implemented; UI left out on purpose.
-- Full claims **frontend** (React Query list/filters, RHF+zod form, detail with GST/two-key UI) — next slice after backend.
-- README polish — near submission.
+- Claim **detail page** — next frontend slice.
+- README polish — ongoing as slices land.
