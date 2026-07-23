@@ -7,56 +7,69 @@ Short, bullet-style notes for the SiteOps expense-claims assessment.
 - Use **`decimal.js`** for claim money math (explicit dependency; same library Prisma Decimal is built on). Prefer decimal **strings** on the wire.
 - Line total = `quantity × unitPrice` with **quantity a positive integer**.
 - Levy = half-up to the cent of **`(fuel subtotal × ratePercent / 100)` once** — never sum of per-line levies.
-- Unit prices: at most **2** decimal places (`parseMoney`). Levy **rates** use a separate parser (`parseRatePercent`, up to 4 dp input) — rates are not money cents.
-- Calculator returns **`Decimal` values** (not JS `number`) through to persistence (`toFixed(2)` strings into Prisma Decimal columns).
+- Unit prices: at most **2** decimal places (`parseMoney`). Levy **rates** use a separate parser (`parseRatePercent`).
+- Calculator returns **`Decimal` values** through to persistence (`toFixed(2)` strings into Prisma Decimal columns).
 
 ## Schema changes
 
-- `Claim.total`, `Claim.levyAmount`, `ClaimLine.unitPrice`, `SurchargeRate.ratePercent` → `Decimal` (no Float money).
-- Added `Claim.levyRatePercent` + `Claim.levyAmount` so totals stay reproducible when org rates change later.
-- Added `firstApprovedById` / `firstApprovedAt` / `rejectedById` / `rejectedAt` for two-key and reject tracking.
-- Claim reference uniqueness is `@@unique([orgId, reference])` (same idea as dockets).
-- Create stores the rate in force on `expenseDate`; submit does not re-read live rates.
-- Money migration (`claim_money_decimal`) **alters in place and backfills** levy fields — it must not `DELETE` claims. (An earlier AI draft that wiped claim tables was rejected; the committed SQL is the backfill version.)
+- Claim / line / surcharge money columns → `Decimal` (no Float).
+- `levyRatePercent` + `levyAmount` on create for reproducibility; `firstApprovedBy*` / `rejectedBy*` for workflow.
+- `@@unique([orgId, reference])` like dockets.
+- Money migration alters in place and **backfills** — no claim `DELETE` in the committed SQL. It backfills `levyRatePercent` from the **effective-dated** `SurchargeRate` (no invented fallback rate), then `levyAmount`, then **recomputes `total`** (line subtotal + levy) so any legacy/broken totals are corrected. A claim with no matching rate is left `NULL` so the `SET NOT NULL` step fails loudly rather than fabricating data. On a fresh install these backfills touch 0 rows (seed runs after migrate); they exist as a real remediation path for pre-existing data.
 
 ## Reference numbering
 
-- Format `EXP {FY}-{seq}` with FY from expense date (AU FY: Jul–Jun) via `financialYearCode`.
-- Seq from `SequenceService` with key `claim:{FY}` per org — collision-free under concurrency; gaps OK.
+- `EXP {FY}-{seq}` via `financialYearCode` + `SequenceService` key `claim:{FY}` per org.
 
 ## Levy reproducibility
 
-- On create, persist `levyRatePercent` + `levyAmount` + `total` from the rate effective on `expenseDate`.
-- Lodgment (`POST /claims/:id/submit`) only flips `DRAFT → SUBMITTED` — it does **not** re-query `SurchargeRate` or recompute totals.
+- Persist rate/amount/total at create; submit does not re-read live `SurchargeRate`.
 
 ## Lodgment
 
-- Only the claim's `submitterId` may submit; others get `403`.
-- Atomic `updateMany` with `status: DRAFT` + `submitterId` in the WHERE (same idea as docket confirm) so double-submit races yield one winner + `409`.
+- Submitter-only; `updateMany` with `DRAFT` + `submitterId` in WHERE.
 
 ## Concurrent decisions / two-key
 
-- Threshold: ex-GST total **> $1,000.00** needs two keys; **$1,000.00 exactly** is one key (`requiresTwoKeys` — Decimal/string only, no JS `number`).
-- First key on SUBMITTED → `PARTIALLY_APPROVED` + `firstApprovedById`; second key must be a **different** user → `APPROVED`.
-- One-key path: SUBMITTED → `APPROVED` in a single step.
-- Race safety: `updateMany` with expected `status` (and `firstApprovedById: { not: actor }` for second key) in the WHERE.
-- No self-dealing on approve or reject (`submitterId === actor` → 403).
-- Covered by PostgreSQL workflow tests (`claims.workflow.spec.ts`), including concurrent first/second keys and approve-vs-reject.
+- Total **> $1000** → two keys; **$1000.00** exact → one key.
+- Race-safe `updateMany`; no self-dealing; covered by Postgres workflow tests.
 
 ## Final-approval event
 
-- On final `APPROVED` only: audit `claim.approved` + outbox `claim.approved` (payload: claimId, reference, total, projectId) inside the same transaction.
-- First-key / partial approval does **not** enqueue outbox.
+- Final `APPROVED` only: audit + outbox `claim.approved` in the same transaction.
 
 ## Rejected claims
 
-- Reject allowed from `SUBMITTED` or `PARTIALLY_APPROVED` → `REJECTED` (final).
-- Supervisor fixes by creating a **new** claim — we do not reopen REJECTED in this slice (keeps decisions final and preserves the rejected claim’s audit history).
+- `REJECTED` is final; fix by creating a **new** claim (preserves rejected audit history).
 
-## Deliberately skipped (for now)
+## List + import
 
-- CSV **import UI** (API still required — not built yet).
-- Claims list pagination / status+FY filters (next).
-- Full claims frontend (React Query, RHF+zod, detail page with GST reference + two-key UI) — next.
-- Fake-auth org/user consistency check (`user.orgId === x-org-id`) — before final submission.
+- `GET /claims` paginated; filters `status` and two-digit `fy` (expense-date FY range).
+- `POST /claims/import` — LegacyPlant CSV (`expense_date,description,quantity,unit_price,is_fuel,group`) plus `projectId` in the body (export has no cost code). Best-effort per `group`; any bad line rejects that group whole. Prices like `"1,299.50"` normalized. Creates **DRAFT** claims for the acting user.
+
+## Fake auth
+
+- Middleware requires `user.orgId === x-org-id` (tenant consistency; still not real auth).
+
+## Error envelope / input hardening
+
+- `GlobalExceptionFilter` registered globally in `main.ts`; every error leaves as `{ success:false, error:{ code, message }, timestamp }`. `ValidationPipe` uses `whitelist` + `forbidNonWhitelisted`.
+- Create DTO: descriptions **trimmed** + length-bounded; `unitPrice` a **non-negative** decimal (≤ 2 dp, ≤ `Decimal(12,2)` capacity) so a bad price is a clean `400`, not a `500`; quantity/line-count capped.
+- **Storage bounds are shared, not DTO-only.** `computeClaimTotals`/`parseMoney` enforce `MAX_MONEY = 9,999,999,999.99`, `MAX_QUANTITY = 1,000,000`, and reject an aggregate `total` that would overflow `Decimal(12,2)`. Since **both** HTTP create and CSV import run through the calculator, an oversized claim is a `400` (create wraps calculator errors) or a curated per-group failure (import) — never a Prisma overflow `500`. The CSV parser mirrors the same limits so bad rows get clear reasons before reaching the DB.
+- CSV `expense_date` must be a **real `YYYY-MM-DD`** date (rejects `2026-02-30`, `2026-13-01`, `02/10/2026`) — `Date.parse` was too lenient.
+- Import failures surface only **curated** business messages; Prisma/internal errors return a generic message (no leaks).
+
+## Migration upgrade-path (verified)
+
+- The money migration was hand-edited after it had already applied locally, so `migrate status` alone doesn't prove the backfill. Verified on **disposable databases**: apply init → insert old Float claims → apply money + approval migrations. Confirmed no rows lost, effective-dated rate chosen correctly (10% for a 2025 claim, 12.5% for a 2026 claim), levy + `total` recomputed (a deliberately-wrong legacy total was corrected to the golden `$67.47`), and a claim predating any rate **aborts** the migration (`levyRatePercent contains null values`) rather than fabricating a rate.
+
+## Testing
+
+- Pure unit tests (money, FY, lifecycle, CSV) + **Postgres** service tests (workflow/concurrency, list, import) + a focused **HTTP** suite (`claims.http.spec.ts`, Nest + Supertest, real Postgres) covering middleware, ValidationPipe, PermissionsGuard, and the success/error envelope.
+
+## Deliberately skipped
+
+- CSV parser assumes **one physical line per row**; multiline quoted fields / unterminated-quote recovery are unsupported (LegacyPlant exports are single-line; the brief emphasises quoted *prices*, which are handled). A mature CSV library would be the next step if multiline fields appear.
+- CSV **import UI** (optional stretch) — API is implemented; UI left out on purpose.
+- Full claims **frontend** (React Query list/filters, RHF+zod form, detail with GST/two-key UI) — next slice after backend.
 - README polish — near submission.

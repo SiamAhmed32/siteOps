@@ -1,9 +1,11 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { ClaimsService } from './claims.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
+import { ImportClaimsDto } from './dto/import-claims.dto';
+import { ListClaimsDto } from './dto/list-claims.dto';
 
 @Controller('claims')
 @UseGuards(PermissionsGuard)
@@ -17,8 +19,15 @@ export class ClaimsController {
   }
 
   @Get()
-  findAll(@Req() req: Request) {
-    return this.claims.findAll((req as any).orgId);
+  list(@Query() query: ListClaimsDto, @Req() req: Request) {
+    return this.claims.list((req as any).orgId, query);
+  }
+
+  /** Static path before `:id` routes so "import" is not captured as an id. */
+  @Post('import')
+  @Permissions('claims.create')
+  import(@Body() dto: ImportClaimsDto, @Req() req: Request) {
+    return this.claims.importLegacyPlant((req as any).orgId, (req as any).user.id, dto);
   }
 
   @Post(':id/submit')
@@ -43,6 +52,4 @@ export class ClaimsController {
   findOne(@Param('id') id: string, @Req() req: Request) {
     return this.claims.findOne((req as any).orgId, id);
   }
-
-  // TODO: import
 }

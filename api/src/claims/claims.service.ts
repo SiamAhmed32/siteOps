@@ -10,10 +10,18 @@ import { AuditService } from '../audit/audit.service';
 import { SequenceService } from '../common/sequence/sequence.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { paginationMeta } from '../common/dto/pagination.dto';
 import { requiresTwoKeys } from './claim-lifecycle';
 import { computeClaimTotals } from './claim-totals';
 import { CreateClaimDto } from './dto/create-claim.dto';
-import { claimSequenceKey, financialYearCode } from './financial-year';
+import { ImportClaimsDto } from './dto/import-claims.dto';
+import { ListClaimsDto } from './dto/list-claims.dto';
+import {
+  claimSequenceKey,
+  financialYearCode,
+  financialYearDateRange,
+} from './financial-year';
+import { parseLegacyPlantCsv } from './legacy-plant-csv';
 
 const claimInclude = {
   lines: true,
@@ -40,14 +48,22 @@ export class ClaimsService {
     }
 
     const rate = await this.findEffectiveLevyRate(orgId, expenseDate);
-    const totals = computeClaimTotals(
-      dto.lines.map((l) => ({
-        quantity: l.quantity,
-        unitPrice: l.unitPrice,
-        isFuel: l.isFuel,
-      })),
-      rate,
-    );
+    let totals;
+    try {
+      totals = computeClaimTotals(
+        dto.lines.map((l) => ({
+          quantity: l.quantity,
+          unitPrice: l.unitPrice,
+          isFuel: l.isFuel,
+        })),
+        rate,
+      );
+    } catch (err) {
+      // Amount/overflow problems are client errors (400), never internal 500s.
+      throw new BadRequestException(
+        err instanceof Error ? err.message : 'Invalid claim amounts',
+      );
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const seq = await this.sequence.next(tx, orgId, claimSequenceKey(expenseDate));
@@ -99,12 +115,30 @@ export class ClaimsService {
     });
   }
 
-  async findAll(orgId: string) {
-    return this.prisma.claim.findMany({
-      where: { orgId },
-      include: claimInclude,
-      orderBy: { createdAt: 'desc' },
-    });
+  async list(orgId: string, query: ListClaimsDto) {
+    const where: Prisma.ClaimWhereInput = {
+      orgId,
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.fy
+        ? (() => {
+            const { gte, lt } = financialYearDateRange(query.fy);
+            return { expenseDate: { gte, lt } };
+          })()
+        : {}),
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.claim.findMany({
+        where,
+        include: claimInclude,
+        orderBy: [{ expenseDate: 'desc' }, { id: 'desc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.claim.count({ where }),
+    ]);
+
+    return { data, meta: paginationMeta(total, query) };
   }
 
   async findOne(orgId: string, id: string) {
@@ -117,6 +151,92 @@ export class ClaimsService {
     }
     const history = await this.audit.forEntity(orgId, 'claim', id);
     return { ...claim, history };
+  }
+
+  /**
+   * LegacyPlant CSV import — best-effort per group/claim.
+   * Valid groups become DRAFT claims; invalid groups are reported with row numbers.
+   * A group with any bad line is rejected whole (no partial claim).
+   */
+  async importLegacyPlant(orgId: string, actorId: string, dto: ImportClaimsDto) {
+    const project = await this.prisma.project.findFirst({
+      where: { id: dto.projectId, orgId },
+    });
+    if (!project) throw new BadRequestException('Unknown project');
+
+    let groups;
+    try {
+      groups = parseLegacyPlantCsv(dto.csv);
+    } catch (err) {
+      throw new BadRequestException(err instanceof Error ? err.message : 'Invalid CSV');
+    }
+
+    const created: unknown[] = [];
+    const failed: {
+      group: string;
+      rowNumbers: number[];
+      reasons: string[];
+    }[] = [];
+
+    for (const g of groups) {
+      if (g.rows.length > 0) {
+        const dates = new Set(g.rows.map((r) => r.expenseDate.slice(0, 10)));
+        if (dates.size > 1) {
+          g.errors.push({
+            rowNumber: g.rows[0].rowNumber,
+            reason: 'all rows in a group must share the same expense_date',
+          });
+        }
+      }
+
+      if (g.errors.length > 0 || g.rows.length === 0) {
+        const rowNumbers = [
+          ...new Set([
+            ...g.errors.map((e) => e.rowNumber),
+            ...g.rows.map((r) => r.rowNumber),
+          ]),
+        ].sort((a, b) => a - b);
+        const reasons: string[] = [];
+        for (const e of g.errors) {
+          const msg = `row ${e.rowNumber}: ${e.reason}`;
+          if (!reasons.includes(msg)) reasons.push(msg);
+        }
+        if (g.rows.length === 0 && g.errors.length === 0) {
+          reasons.push('group has no rows');
+        }
+        failed.push({ group: g.group || '(empty)', rowNumbers, reasons });
+        continue;
+      }
+
+      try {
+        const claim = await this.create(
+          {
+            projectId: dto.projectId,
+            expenseDate: g.rows[0].expenseDate,
+            lines: g.rows.map((r) => ({
+              description: r.description,
+              quantity: r.quantity,
+              unitPrice: r.unitPrice,
+              isFuel: r.isFuel,
+            })),
+          },
+          actorId,
+          orgId,
+        );
+        created.push(claim);
+      } catch (err) {
+        // Surface only curated business errors; never leak Prisma/internal detail.
+        const message =
+          err instanceof BadRequestException ? err.message : 'Failed to create claim';
+        failed.push({
+          group: g.group,
+          rowNumbers: g.rows.map((r) => r.rowNumber),
+          reasons: [message],
+        });
+      }
+    }
+
+    return { created, failed };
   }
 
   /**

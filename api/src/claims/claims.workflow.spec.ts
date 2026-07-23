@@ -317,4 +317,54 @@ describe('ClaimsService workflow (postgres)', () => {
       NotFoundException,
     );
   });
+
+  it('lists with status + fy filters and pagination meta', async () => {
+    await draftAndSubmit(aliceId, smallLines);
+    const page = await claims.list(orgId, { page: 1, pageSize: 10, status: 'SUBMITTED', fy: '26' });
+    expect(page.meta.total).toBeGreaterThanOrEqual(1);
+    expect(page.data.every((c) => c.status === 'SUBMITTED')).toBe(true);
+  });
+
+  it('imports LegacyPlant CSV best-effort per group', async () => {
+    const csv = [
+      'expense_date,description,quantity,unit_price,is_fuel,group',
+      '2026-02-10,Diesel,3,"19.99",true,G1',
+      '2026-02-10,Bad line,,,true,G1',
+      '2026-02-11,Paint,2,"1,299.50",false,G2',
+    ].join('\n');
+
+    const result = await claims.importLegacyPlant(orgId, aliceId, {
+      projectId,
+      csv,
+    });
+
+    expect(result.created).toHaveLength(1);
+    expect((result.created[0] as { status: string }).status).toBe('DRAFT');
+    expect(Number((result.created[0] as { total: { toString(): string } }).total.toString())).toBe(
+      2599,
+    );
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].group).toBe('G1');
+    expect(result.failed[0].rowNumbers.length).toBeGreaterThan(0);
+  });
+
+  it('import: an oversized line fails only its group with a curated reason', async () => {
+    const csv = [
+      'expense_date,description,quantity,unit_price,is_fuel,group',
+      '2026-02-10,Good,2,"5.00",false,OK',
+      '2026-02-10,Too big,1,"10000000000.00",false,BIG',
+    ].join('\n');
+
+    const result = await claims.importLegacyPlant(orgId, aliceId, { projectId, csv });
+
+    expect(result.created).toHaveLength(1);
+    const failed = result.failed.find((f) => f.group === 'BIG')!;
+    expect(failed).toBeDefined();
+    expect(failed.reasons.join(' ')).toMatch(/within range|maximum/i);
+    // No partial claim persisted for the bad group.
+    const persisted = await prisma.claim.findMany({
+      where: { orgId, total: { gt: '9999999999.99' } },
+    });
+    expect(persisted).toHaveLength(0);
+  });
 });
