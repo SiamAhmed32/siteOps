@@ -1,8 +1,10 @@
 'use client';
 
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
-import { apiFetch } from '../../lib/api';
+import { useMemo, useState } from 'react';
+import { apiGet } from '../../lib/api/client';
+import { queryKeys } from '../../lib/query/keys';
 
 type Claim = {
   id: string;
@@ -13,12 +15,33 @@ type Claim = {
   project?: { code: string; name: string };
 };
 
-export default function ClaimsPage() {
-  const [claims, setClaims] = useState<Claim[]>([]);
+type Meta = { total: number; page: number; pageSize: number; pageCount: number };
 
-  useEffect(() => {
-    apiFetch('/claims').then((res) => setClaims(res.data ?? res));
-  }, []);
+function claimsListUrl(page: number, status: string, fy: string) {
+  const params = new URLSearchParams({ page: String(page), pageSize: '10' });
+  if (status) params.set('status', status);
+  if (fy) params.set('fy', fy);
+  return `/claims?${params}`;
+}
+
+export default function ClaimsPage() {
+  const [page, setPage] = useState(1);
+  const [status, setStatus] = useState('');
+  const [fy, setFy] = useState('');
+
+  const filters = useMemo(
+    () => ({ status: status || undefined, fy: fy || undefined }),
+    [status, fy],
+  );
+
+  const { data, isPending, isError, error } = useQuery({
+    queryKey: queryKeys.claims.list(page, filters),
+    queryFn: () => apiGet<Claim[]>(claimsListUrl(page, status, fy)),
+    placeholderData: keepPreviousData,
+  });
+
+  const claims = data?.data ?? [];
+  const meta = data?.meta as Meta | undefined;
 
   return (
     <>
@@ -28,38 +51,88 @@ export default function ClaimsPage() {
           New claim
         </Link>
       </div>
+      <div className="toolbar">
+        <select
+          value={status}
+          onChange={(e) => {
+            setStatus(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">All statuses</option>
+          <option value="DRAFT">Draft</option>
+          <option value="SUBMITTED">Submitted</option>
+          <option value="PARTIALLY_APPROVED">Partially approved</option>
+          <option value="APPROVED">Approved</option>
+          <option value="REJECTED">Rejected</option>
+        </select>
+        <select
+          value={fy}
+          onChange={(e) => {
+            setFy(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">All FY</option>
+          <option value="25">FY25</option>
+          <option value="26">FY26</option>
+        </select>
+      </div>
       <div className="card">
-        <table>
-          <thead>
-            <tr>
-              <th>Reference</th>
-              <th>Project</th>
-              <th>Date</th>
-              <th>Status</th>
-              <th className="num">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {claims.map((c) => (
-              <tr key={c.id}>
-                <td>{c.reference}</td>
-                <td>{c.project?.code ?? '—'}</td>
-                <td>{c.expenseDate.slice(0, 10)}</td>
-                <td>
-                  <span className={`badge ${c.status}`}>{c.status}</span>
-                </td>
-                <td className="num">${Number(c.total).toFixed(2)}</td>
-              </tr>
-            ))}
-            {claims.length === 0 && (
+        {isPending && <p className="pager">Loading…</p>}
+        {isError && (
+          <p className="pager" style={{ color: 'var(--danger)' }}>
+            {(error as Error).message}
+          </p>
+        )}
+        {!isPending && !isError && (
+          <table>
+            <thead>
               <tr>
-                <td colSpan={5} className="muted">
-                  No claims yet
-                </td>
+                <th>Reference</th>
+                <th>Project</th>
+                <th>Date</th>
+                <th>Status</th>
+                <th className="num">Total (ex-GST)</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {claims.map((c) => (
+                <tr key={c.id}>
+                  <td>
+                    <Link href={`/claims/${c.id}`}>{c.reference}</Link>
+                  </td>
+                  <td>{c.project?.code ?? '—'}</td>
+                  <td>{c.expenseDate.slice(0, 10)}</td>
+                  <td>
+                    <span className={`badge ${c.status}`}>{c.status}</span>
+                  </td>
+                  <td className="num">${Number(c.total).toFixed(2)}</td>
+                </tr>
+              ))}
+              {claims.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="muted">
+                    No claims match these filters
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+        {meta && (
+          <div className="pager">
+            <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+              Prev
+            </button>
+            <span>
+              Page {meta.page} of {Math.max(meta.pageCount, 1)} · {meta.total} total
+            </span>
+            <button disabled={page >= meta.pageCount} onClick={() => setPage((p) => p + 1)}>
+              Next
+            </button>
+          </div>
+        )}
       </div>
     </>
   );
