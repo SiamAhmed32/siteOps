@@ -1,4 +1,4 @@
-# SiteOps — Operations Platform (starter)
+# SiteOps — Expense Claims Workflow
 
 Multi-tenant operations platform for road-works contractors. Projects, equipment, plant dockets, site notes, and the burn dashboard are live. The **expense claims** workflow (backend + claims UI) is implemented; see `ASSESSMENT-BRIEF.md` and `DECISIONS.md`.
 
@@ -18,30 +18,36 @@ Multi-tenant operations platform for road-works contractors. Projects, equipment
 
 ## Getting started
 
+Prerequisites: Node.js, npm, and Docker.
+
+Start PostgreSQL and prepare the API:
+
 ```bash
-# database
 cd api
 docker compose up -d
 cp .env.example .env
-
-# api
-npm install
+npm ci
 npx prisma migrate dev
 npx prisma db seed          # prints seeded user/org ids
 npm run start:dev           # http://localhost:3100
+```
 
-# web
-cd ../web
-npm install
+In a second terminal, prepare and start the web app:
+
+```bash
+cd web
+npm ci
 cp .env.example .env.local  # fill in an org id + default user id from the seed output
 npm run dev                 # http://localhost:3000
 ```
 
-Build and test each app from its folder (there is no root `package.json`):
+On Windows Command Prompt, use `copy` instead of `cp`.
+
+Build, type-check, and test each app from its folder (there is no root `package.json`):
 
 ```bash
-cd api && npm run build && npm test
-cd ../web && npm run build && npm run typecheck
+cd api && npm run build && npm run typecheck && npm test
+cd ../web && npm run build && npm run typecheck && npm test
 ```
 
 ## Fake auth
