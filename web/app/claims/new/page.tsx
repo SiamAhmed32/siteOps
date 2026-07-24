@@ -7,7 +7,6 @@ import { useFieldArray, useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
 import { ApiError, apiGet, apiPost } from '../../../lib/api/client';
 import { previewClaimTotals } from '../../../lib/claims/claim-totals';
-import { effectiveLevyRatePercent } from '../../../lib/claims/levy-rate';
 import { queryKeys } from '../../../lib/query/keys';
 
 const MONEY_RE = /^\d{1,10}(\.\d{1,2})?$/;
@@ -65,25 +64,32 @@ export default function NewClaimPage() {
   // useWatch re-renders on every line/date change — watch()+useMemo missed in-place updates.
   const expenseDate = useWatch({ control, name: 'expenseDate' }) ?? '';
   const lines = useWatch({ control, name: 'lines' }) ?? [];
-  const levyRate = effectiveLevyRatePercent(expenseDate);
+
+  // Rate comes from the API (same effective-dated lookup the create path uses) so
+  // the preview can't drift from the server if a SurchargeRate row changes.
+  const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(expenseDate);
+  const rateQuery = useQuery({
+    queryKey: queryKeys.claims.effectiveRate(expenseDate),
+    queryFn: () =>
+      apiGet<{ date: string; ratePercent: string | null; effectiveFrom: string | null }>(
+        `/claims/effective-rate?date=${encodeURIComponent(expenseDate)}`,
+      ),
+    enabled: isValidDate,
+  });
+  const levyRate = isValidDate ? rateQuery.data?.data.ratePercent ?? null : null;
 
   const preview = (() => {
-    if (!levyRate) return null;
-    const parsed = lines
-      .map((l) => {
-        const unitPrice = String(l?.unitPrice ?? '').trim();
-        const quantityRaw = String(l?.quantity ?? '').trim();
-        if (!unitPrice || !MONEY_RE.test(unitPrice) || !/^\d+$/.test(quantityRaw)) return null;
-        const quantity = Number(quantityRaw);
-        if (quantity < 1) return null;
-        return {
-          quantity,
-          unitPrice,
-          isFuel: Boolean(l?.isFuel),
-        };
-      })
-      .filter((l): l is NonNullable<typeof l> => l !== null);
-    if (parsed.length === 0) return null;
+    if (!levyRate || lines.length === 0) return null;
+    const parsed: { quantity: number; unitPrice: string; isFuel: boolean }[] = [];
+    for (const l of lines) {
+      const unitPrice = String(l?.unitPrice ?? '').trim();
+      const quantityRaw = String(l?.quantity ?? '').trim();
+      // Any incomplete/invalid line means the preview can't match the server → show "—".
+      if (!unitPrice || !MONEY_RE.test(unitPrice) || !/^\d+$/.test(quantityRaw)) return null;
+      const quantity = Number(quantityRaw);
+      if (quantity < 1) return null;
+      parsed.push({ quantity, unitPrice, isFuel: Boolean(l?.isFuel) });
+    }
     return previewClaimTotals(parsed, levyRate);
   })();
 
@@ -137,7 +143,13 @@ export default function NewClaimPage() {
             {errors.expenseDate && (
               <span style={{ color: 'var(--danger)' }}> {errors.expenseDate.message}</span>
             )}
-            {expenseDate && !levyRate && (
+            {isValidDate && rateQuery.isPending && (
+              <span className="muted"> Checking levy rate…</span>
+            )}
+            {isValidDate && rateQuery.isError && (
+              <span style={{ color: 'var(--danger)' }}> Could not load the levy rate for this date</span>
+            )}
+            {isValidDate && rateQuery.isSuccess && !levyRate && (
               <span style={{ color: 'var(--danger)' }}> No levy rate in force for this date</span>
             )}
             {levyRate && (

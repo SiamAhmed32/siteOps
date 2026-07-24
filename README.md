@@ -12,7 +12,7 @@ Multi-tenant operations platform for road-works contractors. Projects, equipment
   - `src/claims/` — expense claims module (backend complete; see DECISIONS.md)
   - `src/users/` — org members (used by the dev user-switcher)
 - `web/` — Next.js App Router + TypeScript + TanStack React Query
-  - `app/dashboard`, `app/projects`, `app/equipment`, `app/dockets`, `app/claims` — feature screens (claims list, new, and detail)
+  - `app/dashboard`, `app/projects`, `app/equipment`, `app/dockets`, `app/claims` — feature screens (claims list, new, detail, and CSV import)
   - `lib/api/` — API client · `lib/query/` — cache keys · `lib/claims/` — live total preview · `lib/use-acting-user.ts` — acting user + permissions
   - `components/` — shell, nav, user switcher, notes panel
 

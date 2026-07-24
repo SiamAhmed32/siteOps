@@ -25,6 +25,10 @@ Short, bullet-style notes for the SiteOps expense-claims assessment.
 
 - Persist rate/amount/total at create; submit does not re-read live `SurchargeRate`.
 
+## Effective-rate lookup
+
+- `GET /claims/effective-rate?date=` returns the effective-dated `SurchargeRate` in force on a date (or `ratePercent: null` when none applies yet). Create and this endpoint share one private `lookupLevyRate` helper, so the new-claim preview and the persisted total resolve the rate identically — the client never hard-codes the rate schedule.
+
 ## Lodgment
 
 - Submitter-only; `updateMany` with `DRAFT` + `submitterId` in WHERE.
@@ -41,6 +45,7 @@ Short, bullet-style notes for the SiteOps expense-claims assessment.
 ## Rejected claims
 
 - `REJECTED` is final; fix by creating a **new** claim (preserves rejected audit history).
+- Reject is a **single-reviewer** decision from `SUBMITTED` or `PARTIALLY_APPROVED` — any approver except the submitter can reject, **including the first-key holder**. Deliberate: two-key is dual control on *spending* (approval), not on *stopping* a claim; a reviewer who turned key one must still be able to kill it if they spot a problem before the second key arrives. Self-dealing (submitter) is the only block on reject.
 
 ## List + import
 
@@ -69,13 +74,14 @@ Short, bullet-style notes for the SiteOps expense-claims assessment.
 
 ## Frontend (claims)
 
-- **List (`/claims`)** — React Query + pagination; filters by `status` and FY (two-digit code); row links to detail (detail page is next). Mirrors dockets list patterns (`queryKeys`, `apiGet`, `keepPreviousData`).
-- **New claim (`/claims/new`)** — react-hook-form + zod; `useFieldArray` for lines; live ex-GST preview via `decimal.js` using the **same levy algorithm** as the API (fuel subtotal → levy once, half-up). Effective rate for preview comes from the **seeded rate schedule** (10% from 2024-07-01, 12.5% from 2026-01-01) — no surcharge CRUD in scope, so the client mirrors seed data rather than calling a rates API. `useWatch` drives the preview (not `watch`+`useMemo`, which missed in-place field updates). On create success, invalidates `queryKeys.claims` so the list refreshes without a full reload.
+- **List (`/claims`)** — React Query + pagination; filters by `status` and FY (options generated from today's date: current FY + 3 back, so FY27 claims are filterable). Rows link to detail. Mirrors dockets list patterns (`queryKeys`, `apiGet`, `keepPreviousData`).
+- **New claim (`/claims/new`)** — react-hook-form + zod; `useFieldArray` for lines; live ex-GST preview via `decimal.js` using the **same levy algorithm** as the API (fuel subtotal → levy once, half-up). The effective rate for the preview is **fetched from the API** (`GET /claims/effective-rate?date=`), which runs the *same* effective-dated `SurchargeRate` lookup the create path uses — so the preview can't drift from the server if a rate row changes (an earlier version hard-coded the seeded schedule client-side; replaced to guarantee parity). `useWatch` drives the preview (not `watch`+`useMemo`, which missed in-place field updates). The preview shows **`—` whenever any current line is invalid/incomplete** (it does not silently drop bad lines and total the rest, which would mislead). On create success, invalidates `queryKeys.claims` so the list refreshes without a full reload.
 - **Detail (`/claims/[id]`)** — line items, ex-GST totals with fuel/levy breakdown, GST + inc-GST **reference only** (not stored/thresholded). Audit timeline from `GET /claims/:id` history. Submit (submitter + `DRAFT` only), Approve/Reject (`claims.approve`, no self-dealing). Two-key callout when total > $1,000: shows first approver on `PARTIALLY_APPROVED` and disables second key for the same user. Mutations invalidate claims list, detail, and burn report.
+- **Import (`/claims/import`)** — the optional stretch screen, now built. File upload or paste of a LegacyPlant CSV + a cost-code (project) selector (the export carries no cost code), a "Load sample" helper, and a live data-row count. Below the editor a **live read-only parsed preview** groups the rows into the claims that will actually be created and shows each group's rows under the proper column headers, with invalid cells highlighted and their reason on hover. It mirrors the server, not just field validation: rows are grouped by `group` key (so **non-contiguous** rows of the same group form one claim), the **same-`expense_date`-per-group** rule is checked, and row numbers match the server's import report (numbered over non-empty lines, so blank lines are skipped consistently). A group shows whether it will become a claim or be skipped-and-why. Because this client mirror could drift from the API parser, it has focused tests (`web/lib/claims/csv-preview.spec.ts`, Vitest) covering the field rules, grouping, same-date, blank lines, and validity. Deliberately *not* an editable spreadsheet grid, and *not* a line-number gutter over the textarea (an earlier version had one, but its physical line numbers drifted from the parsed row numbers once a blank line existed): the textarea stays the single source of truth and the server stays the validator — the preview is an affordance, not a second parser of record. Posts to `POST /claims/import` and renders the curated per-group result: a **Created** table (reference / project / total, links to detail) and a **Failed** table (group / row numbers / reasons). Only invalidates `queryKeys.claims` when ≥1 claim was created. Gated on `claims.create` (affordance only; the API still enforces). Reached from the "Import CSV" action on the list header.
+- UI permission gates (`useActingUser().can`) are affordances only — the API guard/middleware enforce the real rules.
+- Removed Priya's unused `web/lib/api.ts` fetch helper once all claims screens moved to the envelope-aware `lib/api/client.ts`.
 
 ## Deliberately skipped
 
 - CSV parser assumes **one physical line per row**; multiline quoted fields / unterminated-quote recovery are unsupported (LegacyPlant exports are single-line; the brief emphasises quoted *prices*, which are handled). A mature CSV library would be the next step if multiline fields appear.
-- CSV **import UI** (optional stretch) — API is implemented; UI left out on purpose.
-- Claim **detail page** — next frontend slice.
-- README polish — ongoing as slices land.
+- No UI theming / real auth / new CRUD — per the brief's "what we do NOT want".

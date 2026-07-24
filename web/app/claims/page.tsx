@@ -24,6 +24,13 @@ function claimsListUrl(page: number, status: string, fy: string) {
   return `/claims?${params}`;
 }
 
+/** Two-digit AU FY codes for the filter: current FY (from today) and the 3 before it. */
+function fyOptions(): string[] {
+  const now = new Date();
+  const endYear = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
+  return [0, 1, 2, 3].map((back) => String((endYear - back) % 100).padStart(2, '0'));
+}
+
 export default function ClaimsPage() {
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('');
@@ -47,9 +54,14 @@ export default function ClaimsPage() {
     <>
       <div className="page-header">
         <h1>Expense Claims</h1>
-        <Link href="/claims/new" className="btn primary">
-          New claim
-        </Link>
+        <div className="action-row">
+          <Link href="/claims/import" className="btn">
+            Import CSV
+          </Link>
+          <Link href="/claims/new" className="btn primary">
+            New claim
+          </Link>
+        </div>
       </div>
       <div className="toolbar">
         <select
@@ -74,8 +86,11 @@ export default function ClaimsPage() {
           }}
         >
           <option value="">All FY</option>
-          <option value="25">FY25</option>
-          <option value="26">FY26</option>
+          {fyOptions().map((code) => (
+            <option key={code} value={code}>
+              FY{code}
+            </option>
+          ))}
         </select>
       </div>
       <div className="card">

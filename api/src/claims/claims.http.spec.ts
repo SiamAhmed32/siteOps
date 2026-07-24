@@ -224,6 +224,24 @@ describe('Claims HTTP (postgres)', () => {
     expect(res.body.data.every((c: { status: string }) => c.status === 'DRAFT')).toBe(true);
   });
 
+  it('returns the effective levy rate for a date (same lookup create uses)', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/claims/effective-rate?date=2026-02-10')
+      .set(auth(creatorId, orgId));
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.ratePercent).toBe('12.50');
+    expect(res.body.data.effectiveFrom).toBe('2026-01-01');
+  });
+
+  it('effective-rate returns null before any rate is in force', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/claims/effective-rate?date=2000-01-01')
+      .set(auth(creatorId, orgId));
+    expect(res.status).toBe(200);
+    expect(res.body.data.ratePercent).toBeNull();
+  });
+
   it('404 envelope for an unknown claim id', async () => {
     const res = await request(app.getHttpServer())
       .get('/api/claims/nope-nope')
