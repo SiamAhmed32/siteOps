@@ -10,6 +10,7 @@ How AI was used on this assessment.
 
 - **Codex** (OpenAI coding agent) — used as a second agent for review passes: a sanity check on
   whether I was on the right track, not to run my tests for me.
+  
 
 ## What AI was used for
 
@@ -54,7 +55,7 @@ integrated:
     quantity `@Min(1)` / `@Max(1_000_000)`, `unitPrice` as a decimal string matching the money regex,
     and `@ArrayMaxSize(500)` on lines.
   - The new-claim zod schema (`lineSchema` / `claimSchema`) — same bounds on the client so the
-    form fails closed before the request leaves the browser.
+    form fails closed before the request leaves the browser.    
   - The fake-auth guard that rejects when `user.orgId !== x-org-id`, and removing the unused
     starter `web/lib/api.ts` once the real client lived under `web/lib/api/client.ts`.
 - **UI/UX direction** — I drove the front-end usability work. The clearest example is the CSV
