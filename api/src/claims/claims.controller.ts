@@ -4,6 +4,7 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { ClaimsService } from './claims.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
+import { EffectiveRateQueryDto } from './dto/effective-rate.dto';
 import { ImportClaimsDto } from './dto/import-claims.dto';
 import { ListClaimsDto } from './dto/list-claims.dto';
 
@@ -21,6 +22,12 @@ export class ClaimsController {
   @Get()
   list(@Query() query: ListClaimsDto, @Req() req: Request) {
     return this.claims.list((req as any).orgId, query);
+  }
+
+  /** Static path before `:id` so "effective-rate" is not captured as an id. */
+  @Get('effective-rate')
+  effectiveRate(@Query() query: EffectiveRateQueryDto, @Req() req: Request) {
+    return this.claims.effectiveLevyRate((req as any).orgId, query.date);
   }
 
   /** Static path before `:id` routes so "import" is not captured as an id. */

@@ -18,6 +18,7 @@ export const queryKeys = {
     list: (page: number, filters?: { status?: string; fy?: string }) =>
       ['claims', 'list', { page, ...filters }] as const,
     detail: (id: string) => ['claims', 'detail', id] as const,
+    effectiveRate: (date: string) => ['claims', 'effective-rate', date] as const,
   },
   notes: {
     forEntity: (entityType: string, entityId: string) => ['notes', entityType, entityId] as const,

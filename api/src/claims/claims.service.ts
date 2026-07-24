@@ -65,54 +65,70 @@ export class ClaimsService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const seq = await this.sequence.next(tx, orgId, claimSequenceKey(expenseDate));
-      const fy = financialYearCode(expenseDate);
-      const reference = `EXP ${fy}-${String(seq).padStart(4, '0')}`;
+    let reference = '';
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const seq = await this.sequence.next(tx, orgId, claimSequenceKey(expenseDate));
+        const fy = financialYearCode(expenseDate);
+        reference = `EXP ${fy}-${String(seq).padStart(4, '0')}`;
 
-      const claim = await tx.claim.create({
-        data: {
-          orgId,
-          projectId: dto.projectId,
-          submitterId: userId,
-          reference,
-          status: 'DRAFT',
-          expenseDate,
-          levyRatePercent: rate,
-          levyAmount: totals.levyAmount.toFixed(2),
-          total: totals.total.toFixed(2),
-          lines: {
-            create: dto.lines.map((l) => ({
-              description: l.description,
-              quantity: l.quantity,
-              unitPrice: l.unitPrice,
-              isFuel: l.isFuel,
-            })),
+        const claim = await tx.claim.create({
+          data: {
+            orgId,
+            projectId: dto.projectId,
+            submitterId: userId,
+            reference,
+            status: 'DRAFT',
+            expenseDate,
+            levyRatePercent: rate,
+            levyAmount: totals.levyAmount.toFixed(2),
+            total: totals.total.toFixed(2),
+            lines: {
+              create: dto.lines.map((l) => ({
+                description: l.description,
+                quantity: l.quantity,
+                unitPrice: l.unitPrice,
+                isFuel: l.isFuel,
+              })),
+            },
           },
-        },
-        include: claimInclude,
+          include: claimInclude,
+        });
+
+        await this.audit.record(
+          {
+            orgId,
+            actorId: userId,
+            action: 'claim.created',
+            entityType: 'claim',
+            entityId: claim.id,
+            after: {
+              reference: claim.reference,
+              status: claim.status,
+              total: claim.total,
+              levyRatePercent: claim.levyRatePercent,
+              levyAmount: claim.levyAmount,
+            },
+          },
+          tx,
+        );
+
+        return claim;
       });
-
-      await this.audit.record(
-        {
-          orgId,
-          actorId: userId,
-          action: 'claim.created',
-          entityType: 'claim',
-          entityId: claim.id,
-          after: {
-            reference: claim.reference,
-            status: claim.status,
-            total: claim.total,
-            levyRatePercent: claim.levyRatePercent,
-            levyAmount: claim.levyAmount,
-          },
-        },
-        tx,
-      );
-
-      return claim;
-    });
+    } catch (err) {
+      // Claim references are auto-generated and unique per org. A collision on
+      // the unique constraint means that reference is already taken; surface a
+      // clear, non-technical message instead of leaking Prisma internals.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          `A claim with reference ${reference} already exists.`,
+        );
+      }
+      throw err;
+    }
   }
 
   async list(orgId: string, query: ListClaimsDto) {
@@ -227,7 +243,9 @@ export class ClaimsService {
       } catch (err) {
         // Surface only curated business errors; never leak Prisma/internal detail.
         const message =
-          err instanceof BadRequestException ? err.message : 'Failed to create claim';
+          err instanceof BadRequestException || err instanceof ConflictException
+            ? err.message
+            : 'Failed to create claim';
         failed.push({
           group: g.group,
           rowNumbers: g.rows.map((r) => r.rowNumber),
@@ -487,17 +505,43 @@ export class ClaimsService {
   }
 
   /**
-   * Levy rate in force for the org on the expense date (effective-dated).
-   * Returns a decimal string for the calculator.
+   * Levy rate in force for the org on a date (effective-dated), or null if none.
+   * Single source of truth for both create and the preview endpoint.
    */
-  private async findEffectiveLevyRate(orgId: string, expenseDate: Date): Promise<string> {
-    const rate = await this.prisma.surchargeRate.findFirst({
-      where: { orgId, effectiveFrom: { lte: expenseDate } },
+  private async lookupLevyRate(orgId: string, on: Date) {
+    return this.prisma.surchargeRate.findFirst({
+      where: { orgId, effectiveFrom: { lte: on } },
       orderBy: { effectiveFrom: 'desc' },
     });
+  }
+
+  /**
+   * Levy rate in force for the org on the expense date (effective-dated).
+   * Returns a decimal string for the calculator; throws if none applies.
+   */
+  private async findEffectiveLevyRate(orgId: string, expenseDate: Date): Promise<string> {
+    const rate = await this.lookupLevyRate(orgId, expenseDate);
     if (!rate) {
       throw new BadRequestException('No levy rate in force for this expense date');
     }
     return rate.ratePercent.toFixed(2);
+  }
+
+  /**
+   * Effective levy rate for a date — powers the new-claim preview so the client
+   * reads the same rate the create path will apply (no hard-coded schedule).
+   * Returns `ratePercent: null` when no rate is in force yet (client shows a hint).
+   */
+  async effectiveLevyRate(orgId: string, date: string) {
+    const on = new Date(date);
+    if (Number.isNaN(on.getTime())) {
+      throw new BadRequestException('date must be a valid date');
+    }
+    const rate = await this.lookupLevyRate(orgId, on);
+    return {
+      date,
+      ratePercent: rate ? rate.ratePercent.toFixed(2) : null,
+      effectiveFrom: rate ? rate.effectiveFrom.toISOString().slice(0, 10) : null,
+    };
   }
 }

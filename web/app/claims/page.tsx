@@ -54,9 +54,14 @@ export default function ClaimsPage() {
     <>
       <div className="page-header">
         <h1>Expense Claims</h1>
-        <Link href="/claims/new" className="btn primary">
-          New claim
-        </Link>
+        <div className="action-row">
+          <Link href="/claims/import" className="btn">
+            Import CSV
+          </Link>
+          <Link href="/claims/new" className="btn primary">
+            New claim
+          </Link>
+        </div>
       </div>
       <div className="toolbar">
         <select
