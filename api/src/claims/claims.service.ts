@@ -28,6 +28,17 @@ const claimInclude = {
   project: { select: { code: true, name: true } },
 } as const;
 
+/** True when a P2002 `meta.target` is the Claim `@@unique([orgId, reference])`. */
+function isClaimReferenceUniqueTarget(target: unknown): boolean {
+  if (Array.isArray(target)) {
+    return target.includes('reference');
+  }
+  if (typeof target === 'string') {
+    return target.includes('reference');
+  }
+  return false;
+}
+
 @Injectable()
 export class ClaimsService {
   constructor(
@@ -116,12 +127,12 @@ export class ClaimsService {
         return claim;
       });
     } catch (err) {
-      // Claim references are auto-generated and unique per org. A collision on
-      // the unique constraint means that reference is already taken; surface a
-      // clear, non-technical message instead of leaking Prisma internals.
+      // Only label the orgId+reference unique as a reference collision.
+      // Any other P2002 in this path (unlikely today) should not claim that.
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === 'P2002'
+        err.code === 'P2002' &&
+        isClaimReferenceUniqueTarget(err.meta?.target)
       ) {
         throw new ConflictException(
           `A claim with reference ${reference} already exists.`,

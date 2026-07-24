@@ -6,7 +6,7 @@ How AI was used on this assessment.
 
 - **Cursor** (chat / agent) — primary implementation tool: scaffolding, first drafts of the claims
   module, and aligning new code with the starter's patterns (especially dockets).
-- **Kimi K3 (Moonshot AI)** — Used for initial reading comprehension and requirements extraction. I pasted the starter README and assessment brief; Kimi reformatted both into structured summaries and highlighted the normative glossary terms, golden-path math examples, and open design questions. This saved ~15 minutes of manual parsing but did not produce any code, tests, or architectural decisions. I rejected none of its output, but it did not attempt any implementation — all design choices (levy snapshotting, two-key concurrency, rejected-claim resurrection) remain mine to make.
+- **Kimi K3 (Moonshot AI)** — Used for initial reading comprehension and requirements extraction. I pasted the starter README and assessment brief; Kimi reformatted both into structured summaries and highlighted the normative glossary terms, golden-path math examples, and open design questions. This saved ~15 minutes of manual parsing but did not produce any code, tests, or architectural decisions. I rejected none of its output, but it did not attempt any implementation — all design choices (levy snapshotting, two-key concurrency, rejected-claim policy) remain mine to make.
 
 - **Codex** (OpenAI coding agent) — used as a second agent for review passes: a sanity check on
   whether I was on the right track, not to run my tests for me.
@@ -41,19 +41,34 @@ integrated:
   DevTools/network checks that the envelope and React Query cache invalidation actually behaved.
 - **Debugging & error-solving** — chased down the concrete bugs in the section below; most AI drafts
   needed a correction pass before they were right.
-- **The smaller, handwritten pieces** — `financial-year.ts`, `claim-lifecycle.ts`, the LegacyPlant
-  CSV price/date parsing (`isStrictIsoDate`), the DTO hardening rules (trimmed/bounded descriptions,
-  non-negative bounded `unitPrice`, quantity/line caps), the zod schema rules, `web/lib/query/keys.ts`,
-  the FY filter options, the fake-auth `user.orgId === x-org-id` check, and removing the unused
-  starter `web/lib/api.ts`.
-- **UI/UX direction** — I drove the front-end usability work. The clearest example is the CSV import screen — I flagged that
-  the raw textarea was hard to read (you couldn't tell which comma-separated value belonged to which
-  column), that the format guide left a lot of dead space on the right, and that a duplicate-reference
-  collision showed a message that didn't say what was actually wrong. I set the direction for each of
-  those fixes; the AI then implemented them to my spec (live parsed preview, line-number gutter,
-  full-width preview layout, sticky guide, clearer conflict error).
+- **Smaller pieces I wrote myself** — not whole modules, but the load-bearing helpers and rules
+  the drafts kept getting wrong or leaving soft:
+  - `financialYearFromDate` / `financialYearCode` / `claimSequenceKey` / `financialYearDateRange`
+    in `financial-year.ts` — AU FY from the expense date only (1 Jul–30 Jun), the two-digit code
+    used in `EXP {FY}-{seq}`, and the half-open date range the list FY filter queries against.
+  - `requiresTwoKeys` in `claim-lifecycle.ts` — threshold check on a decimal string / `Decimal`
+    (`>` $1,000.00; exactly $1,000.00 is one key), never a bare JS number.
+  - LegacyPlant date/price helpers I locked down by hand: `isStrictIsoDate` (rejects `2026-02-30`
+    and `02/10/2026`), and the `"1,299.50"` / `$…` normalisation used by import.
+  - Create-DTO hardening on `ClaimLineDto` / `CreateClaimDto`: trimmed descriptions (`@Length(1,200)`),
+    quantity `@Min(1)` / `@Max(1_000_000)`, `unitPrice` as a decimal string matching the money regex,
+    and `@ArrayMaxSize(500)` on lines.
+  - The new-claim zod schema (`lineSchema` / `claimSchema`) — same bounds on the client so the
+    form fails closed before the request leaves the browser.
+  - The fake-auth guard that rejects when `user.orgId !== x-org-id`, and removing the unused
+    starter `web/lib/api.ts` once the real client lived under `web/lib/api/client.ts`.
+- **UI/UX direction** — I drove the front-end usability work. The clearest example is the CSV
+  import screen — I flagged that the raw textarea was hard to read (you couldn't tell which
+  comma-separated value belonged to which column), that the format guide left dead space on the
+  right, and that a duplicate-reference collision showed a message that didn't say what was wrong.
+  I set the direction; the AI implemented to that spec: a live grouped preview (one block per claim,
+  invalid cells with hover reasons, same-date-per-group), full-width preview + sticky guide, and a
+  clear `A claim with reference … already exists.` conflict. An early line-number gutter idea was
+  dropped on my call — physical editor lines drifted from the server's non-empty-line row numbers
+  once a blank line existed.
 - **Design decisions** — levy snapshotting for reproducibility, the two-key concurrency model,
-  the rejected-claim policy, and the money/rounding approach (all in `DECISIONS.md`).
+  the rejected-claim policy (final; fix = lodge a new claim), and the money/rounding approach
+  (all in `DECISIONS.md`).
 
 ## What AI got wrong (and how I caught it)
 
@@ -77,10 +92,10 @@ integrated:
 - The first CSV import screen was a plain textarea, so it wasn't obvious which comma-separated value
   mapped to which column, the short format guide stranded empty space on the right, and a duplicate
   claim reference surfaced only a vague "record already exists" / "failed to create claim". From my
-  UX review I directed the redesign: a live, read-only parsed preview table (columns, per-cell
-  validation with hover reasons, group boundaries) plus a line-number gutter, the preview moved to
-  full width with the guide made sticky, and the API changed to return a clear
-  `A claim with reference … already exists.` for both the create form and the import path.
+  UX review I directed the redesign that shipped: grouped claim blocks in the preview (not a flat
+  table that lied about non-contiguous groups), same-date-per-group validation, sticky format guide,
+  and the specific reference-collision message. I also had the P2002 handler narrowed so it only
+  claims a reference collision when `meta.target` includes `reference`.
 
 ## Remaining scope
 

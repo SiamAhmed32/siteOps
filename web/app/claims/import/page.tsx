@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRef, useState } from 'react';
 import { ApiError, apiGet, apiPost } from '../../../lib/api/client';
-import { buildCsvPreview, CSV_FIELD_COLUMNS } from '../../../lib/claims/csv-preview';
+import { buildCsvPreview, CSV_FIELD_COLUMNS, splitCsvLines } from '../../../lib/claims/csv-preview';
 import { useActingUser } from '../../../lib/use-acting-user';
 import { queryKeys } from '../../../lib/query/keys';
 
@@ -101,13 +101,16 @@ export default function ImportClaimsPage() {
   }
 
   const result = importer.data?.data;
-  const csvLineCount = csv ? csv.split(/\r?\n/).length : 0;
-  const rowCount = csv.trim() ? Math.max(0, csvLineCount - 1) : 0;
+  // Count / editor sizing use the same non-empty-line split as the server + preview,
+  // so blank lines don't inflate the "data rows" badge.
+  const nonEmptyLines = splitCsvLines(csv);
+  const rowCount = Math.max(0, nonEmptyLines.length - (nonEmptyLines.length > 0 ? 1 : 0));
   const preview = buildCsvPreview(csv);
   const MAX_PREVIEW_GROUPS = 100;
   // Keep the editor compact for small imports, while allowing it to grow for
   // a typical pasted export before the textarea's own scrollbar takes over.
-  const editorRows = Math.min(14, Math.max(7, csvLineCount + 1));
+  const physicalLineCount = csv ? csv.split(/\r?\n/).length : 0;
+  const editorRows = Math.min(14, Math.max(7, physicalLineCount + 1));
 
   if (!canCreate) {
     return (
